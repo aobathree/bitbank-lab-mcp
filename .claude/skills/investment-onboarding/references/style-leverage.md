@@ -81,7 +81,9 @@
 ### Step 5 — 実行
 
 **MCP ツール（Private API キー必要）:**
-- `preview_order`（`position_side: long` または `short` を指定）→ `create_order`
+- `preview_order` → `create_order`（`position_side` を明示して新規建玉）
+  - ロング新規: `side: buy` + `position_side: long`
+  - ショート新規: `side: sell` + `position_side: short`
 
 ### Step 6 — ポジション管理
 
@@ -98,7 +100,10 @@
 利確・損切りのいずれも、**事前に決めたラインを守る** ことを案内する。
 
 **MCP ツール:**
-- `preview_order` → `create_order`（決済方向で発注）
+- `preview_order` → `create_order`（`position_side` を明示して決済）
+  - ロング決済: `side: sell` + `position_side: long`
+  - ショート決済: `side: buy` + `position_side: short`
+  - `position_side` を省略・推測しない。誤指定は意図しない建玉操作につながる
 
 ### Step 8 — モニタリング
 
