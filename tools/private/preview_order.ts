@@ -68,7 +68,7 @@ async function validateTriggerPrice(pair: string, side: 'buy' | 'sell', triggerP
 		if (side === 'sell' && triggerPrice >= currentPrice) {
 			return [
 				`stop sell のトリガー価格（${formatPrice(triggerPrice)}）が現在価格（${formatPrice(currentPrice)}）以上のため、即時発動してしまいます。`,
-				'stop sell は「価格がトリガー以下に下落したとき」に発動します（損切り・ストップロス用）。',
+				'stop sell は「価格がトリガー以下に下落したとき」に発動します（損切り用）。',
 				'R1 上抜けで利確したい場合は limit sell を使用してください。',
 			].join('\n');
 		}
