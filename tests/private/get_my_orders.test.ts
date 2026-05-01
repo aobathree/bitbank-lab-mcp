@@ -224,6 +224,97 @@ describe('get_my_orders', () => {
 		expect(result.meta.orderCount).toBe(2);
 	});
 
+	it('トリガー前の stop 注文（INACTIVE）をアクティブ注文として返す', async () => {
+		setupFetchMock(
+			mockBitbankSuccess({
+				orders: [
+					{
+						order_id: 56975061085,
+						pair: 'eth_jpy',
+						side: 'buy',
+						type: 'stop',
+						start_amount: '0.01',
+						remaining_amount: '0.01',
+						executed_amount: '0',
+						trigger_price: '380000',
+						average_price: '0',
+						status: 'INACTIVE',
+						user_cancelable: true,
+						ordered_at: 1710000300000,
+					},
+				],
+			}),
+		);
+
+		const { default: getMyOrders } = await import('../../tools/private/get_my_orders.js');
+		const result = await getMyOrders({});
+
+		assertOk(result);
+		// INACTIVE は bitbank アプリで「未約定注文」として表示されるため、
+		// get_my_orders からも返す必要がある（PR #393 で誤って弾いていた回帰修正）。
+		expect(result.data.orders).toHaveLength(1);
+		expect(result.data.orders[0].order_id).toBe(56975061085);
+		expect(result.data.orders[0].status).toBe('INACTIVE');
+		expect(result.summary).toContain('1件');
+	});
+
+	it('TRIGGERED 状態の stop 注文もアクティブ注文として返す', async () => {
+		setupFetchMock(
+			mockBitbankSuccess({
+				orders: [
+					{
+						order_id: 56975061086,
+						pair: 'btc_jpy',
+						side: 'sell',
+						type: 'stop',
+						start_amount: '0.001',
+						remaining_amount: '0.001',
+						executed_amount: '0',
+						trigger_price: '15000000',
+						average_price: '0',
+						status: 'TRIGGERED',
+						ordered_at: 1710000400000,
+					},
+				],
+			}),
+		);
+
+		const { default: getMyOrders } = await import('../../tools/private/get_my_orders.js');
+		const result = await getMyOrders({});
+
+		assertOk(result);
+		expect(result.data.orders).toHaveLength(1);
+		expect(result.data.orders[0].status).toBe('TRIGGERED');
+	});
+
+	it('FULLY_FILLED は終端状態として除外する', async () => {
+		setupFetchMock(
+			mockBitbankSuccess({
+				orders: [
+					{
+						order_id: 56975061087,
+						pair: 'eth_jpy',
+						side: 'buy',
+						type: 'limit',
+						start_amount: '0.01',
+						remaining_amount: '0',
+						executed_amount: '0.01',
+						price: '380000',
+						average_price: '380000',
+						status: 'FULLY_FILLED',
+						ordered_at: 1710000500000,
+					},
+				],
+			}),
+		);
+
+		const { default: getMyOrders } = await import('../../tools/private/get_my_orders.js');
+		const result = await getMyOrders({});
+
+		assertOk(result);
+		expect(result.data.orders).toHaveLength(0);
+	});
+
 	it('pair 指定なしで「全ペア」ラベルが表示される', async () => {
 		setupFetchMock(mockBitbankSuccess(rawActiveOrdersResponse));
 

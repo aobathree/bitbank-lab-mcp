@@ -68,8 +68,14 @@ export default async function getMyOrders(args: { pair?: string; count?: number;
 
 		// bitbank API の active_orders は稀に CANCELED_UNFILLED 等の非アクティブ
 		// ステータスを含めて返すケースがあるため、サーバー側でも保険として
-		// アクティブ系（UNFILLED / PARTIALLY_FILLED）のみに絞り込む。
-		const ACTIVE_STATUSES = new Set(['UNFILLED', 'PARTIALLY_FILLED']);
+		// 「ユーザーから見てまだ生きている」注文のみに絞り込む。
+		// - INACTIVE: stop / stop_limit のトリガー前。user_cancelable: true で
+		//   bitbank アプリでも未約定注文として表示される。
+		// - UNFILLED: 通常の指値・成行で未約定。
+		// - PARTIALLY_FILLED: 部分約定。残量分はまだ生きている。
+		// - TRIGGERED: stop がトリガーされ、後続の指値/成行が処理待ち。
+		// FULLY_FILLED や CANCELED_* は終端状態なので除外する。
+		const ACTIVE_STATUSES = new Set(['INACTIVE', 'UNFILLED', 'PARTIALLY_FILLED', 'TRIGGERED']);
 
 		// 注文データの整形
 		const orders = rawData.orders
