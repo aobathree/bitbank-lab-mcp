@@ -43,6 +43,13 @@ export const toolDef: ToolDefinition = {
 		'cancel_orders を実行するには、まずこのツールで確認トークンを取得する必要がある。',
 	].join(' '),
 	inputSchema: PreviewCancelOrdersInputSchema,
+	// MCP Apps (SEP-1865): 対応ホストでは iframe 内にキャンセル確認 UI を表示する。
+	// 非対応ホストでは無視され、従来のテキスト確認フローがそのまま動作する（Progressive Enhancement）。
+	_meta: {
+		ui: {
+			resourceUri: 'ui://cancel/confirm.html',
+		},
+	},
 	handler: async (args) => {
 		const result = previewCancelOrders(args as { pair: string; order_ids: number[] });
 		const text = `${result.summary}\n${JSON.stringify(result.data, null, 2)}`;
