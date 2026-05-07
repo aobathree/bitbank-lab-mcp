@@ -1,0 +1,28 @@
+{
+  "name": "bitbank-lab",
+  "owner": {
+    "name": "tjackiet",
+    "email": ""
+  },
+  "description": "Experimental MCP plugins for the bitbank botters lab community. Hosts the bitbank-lab-mcp plugin (market data, technical analysis, charting, and Private API trading tools).",
+  "plugins": [
+    {
+      "name": "bitbank-lab-mcp",
+      "source": ".",
+      "description": "Experimental MCP server for bitbank — botters lab community edition. Market data, technical analysis, charting, and Private API trading tools.",
+      "homepage": "https://github.com/tjackiet/bitbank-genesis-mcp-server",
+      "repository": "https://github.com/tjackiet/bitbank-genesis-mcp-server",
+      "license": "MIT",
+      "category": "data",
+      "keywords": [
+        "bitbank",
+        "cryptocurrency",
+        "trading",
+        "market-data",
+        "technical-analysis",
+        "mcp",
+        "botters-lab"
+      ]
+    }
+  ]
+}

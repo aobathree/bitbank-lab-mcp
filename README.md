@@ -79,8 +79,14 @@ Claude Code / Cursor / Codex / Gemini CLI には plugin manifest（`.claude-plug
 **Claude Code の例**:
 
 ```bash
-/plugin install tjackiet/bitbank-genesis-mcp-server
+# 1. このリポジトリを marketplace として登録（初回のみ）
+/plugin marketplace add tjackiet/bitbank-genesis-mcp-server
+
+# 2. plugin を install
+/plugin install bitbank-lab-mcp@bitbank-lab
 ```
+
+`bitbank-lab` はこのリポが提供する marketplace 名（`.claude-plugin/marketplace.json` の `name` フィールド）、`bitbank-lab-mcp` は plugin 名です。
 
 実行後、bitbank API key / API secret の入力 UI が表示されます。**Public ツールだけで使う場合は両方とも空欄で OK** — Private API ツールは API キーを入力したときだけ自動的に有効化されます。
 
