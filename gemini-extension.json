@@ -1,0 +1,31 @@
+{
+  "name": "bitbank-lab-mcp",
+  "version": "0.1.0",
+  "description": "Experimental MCP server for bitbank — botters lab community edition. Market data, technical analysis, charting, and Private API trading tools.",
+  "mcpServers": {
+    "bitbank": {
+      "command": "npx",
+      "args": ["-y", "bitbank-lab-mcp"],
+      "env": {
+        "BITBANK_API_KEY": "$BITBANK_API_KEY",
+        "BITBANK_API_SECRET": "$BITBANK_API_SECRET",
+        "LOG_LEVEL": "info",
+        "NO_COLOR": "1"
+      }
+    }
+  },
+  "settings": [
+    {
+      "name": "bitbank API key",
+      "description": "Optional. Set together with API secret to enable Private API tools (assets, orders, portfolio). Leave blank for public/market data only.",
+      "envVar": "BITBANK_API_KEY",
+      "sensitive": true
+    },
+    {
+      "name": "bitbank API secret",
+      "description": "Optional. Required only if you set the API key above. Issue at https://app.bitbank.cc/account/api with read+trade permissions.",
+      "envVar": "BITBANK_API_SECRET",
+      "sensitive": true
+    }
+  ]
+}

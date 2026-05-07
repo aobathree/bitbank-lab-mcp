@@ -1,9 +1,12 @@
-# bitbank-mcp-server
+# bitbank-lab-mcp
 
 [![CI](https://github.com/tjackiet/bitbank-genesis-mcp-server/actions/workflows/ci.yml/badge.svg)](https://github.com/tjackiet/bitbank-genesis-mcp-server/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![npm](https://img.shields.io/npm/v/bitbank-lab-mcp.svg)](https://www.npmjs.com/package/bitbank-lab-mcp)
 
 > bitbank API のデータを使った暗号資産市場分析を、Claude（LLM）から簡単に実行できる MCP サーバーです。
+
+> 📌 **位置付け**: 本リポジトリは **bitbank 公式版**（[`bitbankinc/bitbank-mcp-server`](https://github.com/bitbankinc/bitbank-mcp-server)）の **先行実験版**です。「ビットバンク botters lab」コミュニティ向けに、新機能を先行リリースしています。安定運用したい方は公式版の利用を推奨します。
 
 ## ⚠️ Disclaimer
 
@@ -60,7 +63,41 @@ npm install
 ```
 ビルドステップは不要です（tsx で TypeScript を直接実行します）。
 
-### 2. Claude Desktop に登録（最短）
+### 2-A. Plugin として install（最短・推奨）
+
+Claude Code / Cursor / Codex / Gemini CLI には plugin manifest（`.claude-plugin/plugin.json` ほか 3 種）を同梱しています。各クライアントの `/plugin install`（または相当のコマンド）でこのリポジトリを指定するだけでセットアップが完了します。**API キー入力 UI を備えているのは Claude Code と Gemini CLI のみ** — Cursor / Codex はシェル環境変数で API キーを渡す方式です（後述）。
+
+| クライアント | manifest | API キーの渡し方 |
+|---|---|---|
+| Claude Code | `.claude-plugin/plugin.json` | ✅ **GUI で入力**: `/plugin install` 直後に `userConfig` UI が表示され、OS キーチェーンに保管 |
+| Gemini CLI | `gemini-extension.json` | ✅ **対話 prompt**: `settings` 配列で対話的に入力、`.env` に保管 |
+| Cursor | `.cursor-plugin/plugin.json` | ⚙️ **シェル環境変数のみ**: `BITBANK_API_KEY` / `BITBANK_API_SECRET` を環境変数に設定（Cursor は plugin 経由の prompt 未対応） |
+| Codex | `.codex-plugin/plugin.json` | ⚙️ **シェル環境変数のみ**: `BITBANK_API_KEY` / `BITBANK_API_SECRET` を環境変数に設定 |
+
+> いずれの manifest も npm registry の [`bitbank-lab-mcp`](https://www.npmjs.com/package/bitbank-lab-mcp) を `npx -y` 経由で起動します。Node.js さえあれば自動でインストールされ、ローカル clone 不要です。
+
+**Claude Code の例**:
+
+```bash
+/plugin install tjackiet/bitbank-genesis-mcp-server
+```
+
+実行後、bitbank API key / API secret の入力 UI が表示されます。**Public ツールだけで使う場合は両方とも空欄で OK** — Private API ツールは API キーを入力したときだけ自動的に有効化されます。
+
+> API キーを後から追加・変更したい場合は `/plugin` から該当 plugin の設定を開き、`api_key` / `api_secret` を更新してください。Claude Code では `sensitive: true` のため OS のキーチェーンに保管されます。
+
+**Cursor / Codex の場合（環境変数経由）**:
+
+`/plugin install` 実行後、シェルで以下のように環境変数を設定してから Cursor / Codex を起動してください（Public ツールだけ使う場合は不要）:
+
+```bash
+export BITBANK_API_KEY="your_api_key"
+export BITBANK_API_SECRET="your_api_secret"
+```
+
+macOS / Linux では `~/.zshrc` や `~/.bashrc` に書いておくと永続化されます。Windows は環境変数の管理画面 or `setx` を使用してください。
+
+### 2-B. Claude Desktop に登録（手動設定）
 
 `~/Library/Application Support/Claude/claude_desktop_config.json` に設定を追加します。
 
@@ -132,6 +169,7 @@ which node
 - ⚠️ macOS では Desktop フォルダに配置すると権限エラーが発生する場合があります（ホームディレクトリ直下を推奨）
 - 追加後、Claude Desktop を `Cmd+Q`（Windows は完全終了）で再起動してください
 - Docker は不要です（[Docker起動](docs/ops.md#docker起動開発検証用)もできます）
+- Plugin install（[2-A](#2-a-plugin-として-install最短推奨)）を使えばこの手順は不要です
 
 #### Windows の場合（ソースコードから）
 
@@ -200,7 +238,7 @@ claude mcp add --transport stdio bitbank -- npx tsx /ABS/PATH/to/src/server.ts
 
 Cursor と同じ設定を使用してください。
 
-> 将来 `@tjackiet/bitbank-mcp` が npm 公開された際は `npx -y @tjackiet/bitbank-mcp` でより簡単に利用できるようになります。
+> npm 公開済み (`bitbank-lab-mcp`) のため、`command: "npx", args: ["-y", "bitbank-lab-mcp"]` でも利用できます。`/ABS/PATH/to/` を書く必要がなく、Node.js のバージョン管理ツール（nvm/volta）にも追随します。
 
 ### 3. 使ってみる
 Claude にそのまま話しかけます:
@@ -233,7 +271,9 @@ export BITBANK_API_KEY="your_api_key"
 export BITBANK_API_SECRET="your_api_secret"
 ```
 
-**Claude Desktop の場合** — `claude_desktop_config.json` の `env` に追加（[ステップ 2](#2-claude-desktop-に登録最短) で設定した方式A／方式B のいずれかに、以下のように `BITBANK_API_KEY` と `BITBANK_API_SECRET` を追加するだけです）:
+**Plugin install を使った場合** — `/plugin` から該当 plugin の設定を開き、`api_key` / `api_secret` を入力すれば完了です（手動編集は不要）。
+
+**Claude Desktop で手動設定している場合** — `claude_desktop_config.json` の `env` に追加（[ステップ 2-B](#2-b-claude-desktop-に登録手動設定) で設定した方式A／方式B のいずれかに、以下のように `BITBANK_API_KEY` と `BITBANK_API_SECRET` を追加するだけです）:
 ```json
 {
   "mcpServers": {

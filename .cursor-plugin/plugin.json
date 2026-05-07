@@ -1,0 +1,28 @@
+{
+  "name": "bitbank-lab-mcp",
+  "displayName": "bitbank lab MCP",
+  "version": "0.1.0",
+  "description": "Experimental MCP server for bitbank — botters lab community edition. Market data, technical analysis, charting, and Private API trading tools.",
+  "author": {
+    "name": "tjackiet"
+  },
+  "homepage": "https://github.com/tjackiet/bitbank-genesis-mcp-server",
+  "repository": "https://github.com/tjackiet/bitbank-genesis-mcp-server",
+  "license": "MIT",
+  "keywords": [
+    "bitbank",
+    "cryptocurrency",
+    "trading",
+    "market-data",
+    "technical-analysis",
+    "mcp",
+    "botters-lab"
+  ],
+  "category": "data",
+  "mcpServers": {
+    "bitbank": {
+      "command": "npx",
+      "args": ["-y", "bitbank-lab-mcp"]
+    }
+  }
+}
