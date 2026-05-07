@@ -16,7 +16,7 @@
     "src/",
     "tools/",
     "lib/",
-    "assets/",
+    "assets/lightweight-charts.standalone.js",
     "ui/order-confirm/dist/",
     "ui/cancel-confirm/dist/",
     "package.json",
