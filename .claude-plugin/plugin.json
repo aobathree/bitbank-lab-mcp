@@ -1,0 +1,46 @@
+{
+  "name": "bitbank-mcp",
+  "version": "0.0.0",
+  "description": "MCP server for bitbank cryptocurrency exchange — market data, technical analysis, and trading tools",
+  "author": {
+    "name": "tjackiet",
+    "url": "https://github.com/tjackiet"
+  },
+  "homepage": "https://github.com/tjackiet/bitbank-genesis-mcp-server",
+  "repository": "https://github.com/tjackiet/bitbank-genesis-mcp-server",
+  "license": "MIT",
+  "keywords": [
+    "bitbank",
+    "cryptocurrency",
+    "trading",
+    "market-data",
+    "technical-analysis",
+    "mcp"
+  ],
+  "userConfig": {
+    "api_key": {
+      "type": "string",
+      "title": "bitbank API key",
+      "description": "Optional. Set together with API secret to enable Private API tools (assets, orders, portfolio). Leave blank for public/market data only.",
+      "sensitive": true
+    },
+    "api_secret": {
+      "type": "string",
+      "title": "bitbank API secret",
+      "description": "Optional. Required only if you set the API key above. Issue at https://app.bitbank.cc/account/api with read+trade permissions.",
+      "sensitive": true
+    }
+  },
+  "mcpServers": {
+    "bitbank": {
+      "command": "npx",
+      "args": ["-y", "${CLAUDE_PLUGIN_ROOT}"],
+      "env": {
+        "BITBANK_API_KEY": "${user_config.api_key}",
+        "BITBANK_API_SECRET": "${user_config.api_secret}",
+        "LOG_LEVEL": "info",
+        "NO_COLOR": "1"
+      }
+    }
+  }
+}

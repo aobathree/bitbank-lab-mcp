@@ -1,0 +1,24 @@
+{
+  "name": "bitbank-mcp",
+  "version": "0.0.0",
+  "description": "MCP server for bitbank cryptocurrency exchange — market data, technical analysis, and trading tools",
+  "author": {
+    "name": "tjackiet",
+    "url": "https://github.com/tjackiet"
+  },
+  "homepage": "https://github.com/tjackiet/bitbank-genesis-mcp-server",
+  "repository": "https://github.com/tjackiet/bitbank-genesis-mcp-server",
+  "license": "MIT",
+  "mcpServers": {
+    "bitbank": {
+      "command": "npx",
+      "args": ["-y", "${CURSOR_PLUGIN_ROOT}"],
+      "env": {
+        "BITBANK_API_KEY": "${BITBANK_API_KEY}",
+        "BITBANK_API_SECRET": "${BITBANK_API_SECRET}",
+        "LOG_LEVEL": "info",
+        "NO_COLOR": "1"
+      }
+    }
+  }
+}
