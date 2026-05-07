@@ -64,12 +64,14 @@ npm install
 
 Claude Code / Cursor / Codex / Gemini CLI には plugin manifest（`.claude-plugin/plugin.json` ほか 3 種）を同梱しています。各クライアントの `/plugin install`（または相当のコマンド）でこのリポジトリを指定するだけでセットアップが完了し、API キー入力 UI が表示されます。
 
-| クライアント | manifest | API キー UI |
+| クライアント | manifest | API キー入力方法 |
 |---|---|---|
-| Claude Code | `.claude-plugin/plugin.json` | `userConfig` (keychain 保管) |
-| Cursor | `.cursor-plugin/plugin.json` | 環境変数 `BITBANK_API_KEY` / `BITBANK_API_SECRET` |
-| Codex | `.codex-plugin/plugin.json` | 環境変数 `BITBANK_API_KEY` / `BITBANK_API_SECRET` |
-| Gemini CLI | `gemini-extension.json` | `settings` 配列 (`.env` に保管) |
+| Claude Code | `.claude-plugin/plugin.json` | `/plugin install` 直後に `userConfig` UI が表示（keychain 保管） |
+| Cursor | `.cursor-plugin/plugin.json` + `.cursor-plugin/mcp.json` | シェル環境変数 `BITBANK_API_KEY` / `BITBANK_API_SECRET`（Cursor は plugin manifest からの prompt 未対応） |
+| Codex | `.codex-plugin/plugin.json` + `.codex-plugin/.mcp.json` | シェル環境変数 `BITBANK_API_KEY` / `BITBANK_API_SECRET` |
+| Gemini CLI | `gemini-extension.json` | `settings` 配列で対話的に入力（`.env` に保管） |
+
+> いずれの manifest も「clone した plugin ディレクトリを local npm パッケージとして扱い、その bin (`bitbank-mcp`) を `npx -y` で起動する」方式で動作します。npm publish は不要です。
 
 **Claude Code の例**:
 

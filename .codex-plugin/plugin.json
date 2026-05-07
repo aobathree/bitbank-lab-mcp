@@ -9,21 +9,23 @@
   "homepage": "https://github.com/tjackiet/bitbank-genesis-mcp-server",
   "repository": "https://github.com/tjackiet/bitbank-genesis-mcp-server",
   "license": "MIT",
+  "keywords": [
+    "bitbank",
+    "cryptocurrency",
+    "trading",
+    "market-data",
+    "technical-analysis",
+    "mcp"
+  ],
+  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "bitbank MCP",
+    "shortDescription": "bitbank の市場データ取得・テクニカル分析・取引ツールを提供する MCP サーバー",
     "longDescription": "bitbank の公開 API から価格・板情報・約定履歴・ローソク足を取得し、テクニカル指標 (SMA / RSI / BB / 一目均衡表 / MACD)、フロー分析、ボラティリティ、板圧力、パターン検出、総合スコア判定までを LLM に提供する MCP サーバー。Visualizer 用整形データと SVG/PNG チャート出力に対応。BITBANK_API_KEY / BITBANK_API_SECRET を設定すると、資産確認・注文 (preview→execute の 2 段階確認) 等の Private API ツールが追加で有効化される。",
+    "developerName": "tjackiet",
+    "category": "Finance",
+    "capabilities": ["Read", "Write", "Interactive"],
+    "websiteURL": "https://github.com/tjackiet/bitbank-genesis-mcp-server",
     "defaultPrompt": "BTC の今の市場状況を analyze_market_signal で総合判定して、根拠と寄与度も教えて。"
-  },
-  "mcpServers": {
-    "bitbank": {
-      "command": "npx",
-      "args": ["-y", "${CODEX_PLUGIN_ROOT}"],
-      "env": {
-        "BITBANK_API_KEY": "${BITBANK_API_KEY}",
-        "BITBANK_API_SECRET": "${BITBANK_API_SECRET}",
-        "LOG_LEVEL": "info",
-        "NO_COLOR": "1"
-      }
-    }
   }
 }

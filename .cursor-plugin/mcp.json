@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "bitbank": {
+      "command": "npx",
+      "args": ["-y", "."],
+      "env": {
+        "BITBANK_API_KEY": "${BITBANK_API_KEY}",
+        "BITBANK_API_SECRET": "${BITBANK_API_SECRET}",
+        "LOG_LEVEL": "info",
+        "NO_COLOR": "1"
+      }
+    }
+  }
+}
