@@ -15,7 +15,7 @@ git tag v0.5.0 && git push origin v0.5.0
 | ステップ | 内容 |
 |---|---|
 | 1. CI gate | lint / typecheck / test をタグ時点のコードで再実行 |
-| 2. npm publish | `@tjackiet/bitbank-mcp` を npm に公開 |
+| 2. npm publish | [`bitbank-lab-mcp`](https://www.npmjs.com/package/bitbank-lab-mcp) を npm に公開 |
 | 3. Docker push | `ghcr.io/tjackiet/bitbank-genesis-mcp-server` に push |
 | 4. GitHub Release | changelog 自動生成でリリース作成 |
 
@@ -23,7 +23,7 @@ git tag v0.5.0 && git push origin v0.5.0
 
 `v0.5.0-beta.1` のようなタグは pre-release として扱われます。
 
-- npm: `beta` dist-tag で publish（`npm install @tjackiet/bitbank-mcp@beta`）
+- npm: `beta` dist-tag で publish（`npm install bitbank-lab-mcp@beta`）
 - Docker: `beta` タグ付与
 - GitHub Release: `prerelease: true`
 
