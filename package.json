@@ -41,9 +41,11 @@
     "lint": "oxlint src/ tools/ lib/",
     "lint:fix": "oxlint --fix src/ tools/ lib/",
     "format": "biome format --write src/ tools/ lib/",
-    "format:check": "biome check src/ tools/ lib/",
     "postinstall": "mkdir -p assets && cp node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.js assets/lightweight-charts.standalone.js || true",
     "build:ui:cancel": "vite build --config ui/cancel-confirm/vite.config.ts"
+  },
+  "engines": {
+    "node": ">=22"
   },
   "keywords": [],
   "author": "",
