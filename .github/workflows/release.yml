@@ -74,7 +74,7 @@ jobs:
           registry-url: 'https://registry.npmjs.org'
 
       - name: Upgrade npm (Trusted Publishing requires >= 11.5.1)
-        run: npm install -g npm@latest
+        run: npm install -g npm@latest --force
 
       - name: Install deps
         run: npm ci
