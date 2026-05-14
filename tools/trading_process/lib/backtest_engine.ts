@@ -30,7 +30,11 @@ export interface BacktestEngineSummary {
 	win_rate: number;
 	/** 0以上。最大ドローダウン[%] */
 	max_drawdown_pct: number;
-	/** Buy&Hold との比較 */
+	/**
+	 * Buy & Hold との比較。
+	 * 戦略がトレード可能になる最初のバー（ウォームアップ終了直後）の **t+1 open** を起点、
+	 * 最終バーの close を終点として計算する。ウォームアップ区間の値動きは含めない。
+	 */
 	buy_hold_pnl_pct: number;
 	/** 超過リターン（戦略 - Buy&Hold） */
 	excess_return_pct: number;
@@ -173,6 +177,10 @@ function calcSharpeRatio(equityCurve: EquityPoint[], timeframe: string): number 
 
 /**
  * サマリー統計を計算（複利）
+ *
+ * @param tradableStartIdx 戦略がトレード可能になる最初のインデックス（ウォームアップ本数）。
+ *   B&H の起点は `candles[tradableStartIdx + 1].open`（t+1 open 約定と整合）。
+ *   省略時は 0（=従来挙動）。
  */
 export function calculateSummary(
 	trades: Trade[],
@@ -180,13 +188,19 @@ export function calculateSummary(
 	candles: Candle[],
 	equityCurve: EquityPoint[],
 	timeframe: string,
+	tradableStartIdx: number = 0,
 ): BacktestEngineSummary {
-	// Buy&Hold の計算
+	// Buy & Hold は tradable 区間で算出する。
+	// 起点: candles[tradableStartIdx + 1].open（戦略が最初に約定し得る t+1 open）
+	// 終点: candles[last].close（常時保有なので最終バー close で OK）
 	let buyHoldPnlPct = 0;
-	if (candles.length >= 2) {
-		const firstClose = candles[0].close;
+	const startIdx = tradableStartIdx + 1;
+	if (candles.length >= 2 && startIdx < candles.length) {
+		const startPrice = candles[startIdx].open;
 		const lastClose = candles[candles.length - 1].close;
-		buyHoldPnlPct = ((lastClose - firstClose) / firstClose) * 100;
+		if (startPrice > 0) {
+			buyHoldPnlPct = ((lastClose - startPrice) / startPrice) * 100;
+		}
 	}
 
 	if (trades.length === 0) {
@@ -249,7 +263,9 @@ export function runBacktestEngine(
 	const { equity_curve, drawdown_curve, max_drawdown } = calculateEquityAndDrawdown(trades, candles);
 
 	// 4. サマリー計算
-	const summary = calculateSummary(trades, max_drawdown, candles, equity_curve, input.timeframe);
+	// B&H の起点はウォームアップ終了直後（戦略が最初にシグナル可能なバー）に揃える
+	const tradableStartIdx = strategy.computeRequiredBars(params);
+	const summary = calculateSummary(trades, max_drawdown, candles, equity_curve, input.timeframe, tradableStartIdx);
 
 	// 5. オーバーレイデータ取得
 	const overlays = strategy.getOverlays(candles, params);

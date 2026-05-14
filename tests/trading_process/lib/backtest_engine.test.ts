@@ -133,18 +133,57 @@ describe('calculateSummary', () => {
 		expect(summary.profit_factor).toBeNull();
 	});
 
-	it('Buy&Hold 損益を計算する', () => {
+	it('Buy&Hold 損益を計算する（tradable 区間の t+1 open 起点）', () => {
 		const candles: Candle[] = [
-			{ time: 't0', open: 100, high: 110, low: 90, close: 100 },
-			{ time: 't1', open: 105, high: 115, low: 95, close: 200 },
+			{ time: 't0', open: 50, high: 60, low: 40, close: 50 }, // ウォームアップ
+			{ time: 't1', open: 100, high: 110, low: 90, close: 120 }, // tradableStartIdx
+			{ time: 't2', open: 110, high: 120, low: 100, close: 150 }, // t+1 = B&H 起点 (open=110)
+			{ time: 't3', open: 140, high: 160, low: 130, close: 220 }, // 終点 close=220
 		];
 		const equityCurve = candles.map((c) => ({
 			time: c.time,
 			equity_pct: 0,
 			confirmed_pct: 0,
 		}));
-		const summary = calculateSummary([], 0, candles, equityCurve, '1D');
-		expect(summary.buy_hold_pnl_pct).toBe(100); // (200-100)/100 * 100
+		const summary = calculateSummary([], 0, candles, equityCurve, '1D', 1);
+		// 起点: candles[2].open = 110、終点: candles[3].close = 220 → (220-110)/110*100 = 100%
+		expect(summary.buy_hold_pnl_pct).toBe(100);
+	});
+
+	it('ウォームアップ中だけ価格が動き、tradable 区間がフラットなら B&H ≒ 0%', () => {
+		const candles: Candle[] = [
+			// ウォームアップ中に +100%
+			{ time: 't0', open: 50, high: 60, low: 40, close: 50 },
+			{ time: 't1', open: 100, high: 110, low: 90, close: 100 }, // tradableStartIdx
+			// tradable 区間はフラット（t+1 open = 100, last close = 100）
+			{ time: 't2', open: 100, high: 100, low: 100, close: 100 },
+			{ time: 't3', open: 100, high: 100, low: 100, close: 100 },
+		];
+		const equityCurve = candles.map((c) => ({
+			time: c.time,
+			equity_pct: 0,
+			confirmed_pct: 0,
+		}));
+		const summary = calculateSummary([], 0, candles, equityCurve, '1D', 1);
+		expect(summary.buy_hold_pnl_pct).toBe(0);
+	});
+
+	it('ウォームアップ中フラット・tradable 区間で +50% なら B&H = 50%', () => {
+		const candles: Candle[] = [
+			// ウォームアップフラット
+			{ time: 't0', open: 100, high: 100, low: 100, close: 100 },
+			{ time: 't1', open: 100, high: 100, low: 100, close: 100 }, // tradableStartIdx
+			// tradable 区間で +50%（t+1 open = 100 → last close = 150）
+			{ time: 't2', open: 100, high: 160, low: 90, close: 140 },
+			{ time: 't3', open: 140, high: 160, low: 130, close: 150 },
+		];
+		const equityCurve = candles.map((c) => ({
+			time: c.time,
+			equity_pct: 0,
+			confirmed_pct: 0,
+		}));
+		const summary = calculateSummary([], 0, candles, equityCurve, '1D', 1);
+		expect(summary.buy_hold_pnl_pct).toBe(50);
 	});
 
 	it('勝ちトレードで正しいサマリーを計算', () => {

@@ -219,7 +219,9 @@ function generateSummaryText(data: GenericBacktestChartData): string {
 	lines.push('');
 	lines.push(`--- Summary (Compound) ---`);
 	lines.push(`Total P&L: ${summary.total_pnl_pct >= 0 ? '+' : ''}${summary.total_pnl_pct.toFixed(2)}%`);
-	lines.push(`Buy & Hold: ${summary.buy_hold_pnl_pct >= 0 ? '+' : ''}${summary.buy_hold_pnl_pct.toFixed(2)}%`);
+	lines.push(
+		`Buy & Hold: ${summary.buy_hold_pnl_pct >= 0 ? '+' : ''}${summary.buy_hold_pnl_pct.toFixed(2)}% (tradable 区間のみ)`,
+	);
 	lines.push(`Excess Return: ${summary.excess_return_pct >= 0 ? '+' : ''}${summary.excess_return_pct.toFixed(2)}%`);
 	lines.push(`Trades: ${summary.trade_count}`);
 	lines.push(`Win Rate: ${(summary.win_rate * 100).toFixed(1)}%`);
