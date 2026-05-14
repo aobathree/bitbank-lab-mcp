@@ -180,7 +180,7 @@ function calcSharpeRatio(equityCurve: EquityPoint[], timeframe: string): number 
  *
  * @param tradableStartIdx 戦略がトレード可能になる最初のインデックス（ウォームアップ本数）。
  *   B&H の起点は `candles[tradableStartIdx + 1].open`（t+1 open 約定と整合）。
- *   省略時は 0（=従来挙動）。
+ *   省略時は 0（=ウォームアップなし。B&H 起点は `candles[1].open`）。
  */
 export function calculateSummary(
 	trades: Trade[],
