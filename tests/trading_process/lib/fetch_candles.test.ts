@@ -297,4 +297,45 @@ describe('fetchCandlesForBacktest', () => {
 			fetchCandlesForBacktest('btc_jpy', '1D', { type: 'absolute', start: '2024-02-01', end: '2024-01-01' }, 0),
 		).rejects.toThrow('must be on or before');
 	});
+
+	it('absolute: 取得上限に達し最古足が start_date より新しい → 明示エラー', async () => {
+		// 1D の MAX_FETCHABLE_BARS = 5000 ぶんを返すが、最古足は start_date (2010-01-01) より大幅に新しい
+		vi.mocked(getCandles).mockResolvedValue({
+			ok: true,
+			summary: 'ok',
+			data: { normalized: makeNormalized(5000, '2020-01-01') },
+		} as never);
+		await expect(
+			fetchCandlesForBacktest('btc_jpy', '1D', { type: 'absolute', start: '2010-01-01', end: '2025-12-31' }, 10),
+		).rejects.toThrow(/Insufficient historical data.*hit API fetch cap/);
+	});
+
+	it('absolute: warmup 分の本数が start_date 直前に足りない → 明示エラー', async () => {
+		// start=2024-01-10, warmup=20 だが、2024-01-01 から始まるので start 直前は 9 本しかない
+		vi.mocked(getCandles).mockResolvedValue({
+			ok: true,
+			summary: 'ok',
+			data: { normalized: makeNormalized(50, '2024-01-01') },
+		} as never);
+		await expect(
+			fetchCandlesForBacktest('btc_jpy', '1D', { type: 'absolute', start: '2024-01-10', end: '2024-01-20' }, 20),
+		).rejects.toThrow(/Insufficient warmup data.*need 20 bars before 2024-01-10/);
+	});
+
+	it('absolute: 取得上限未達なら最古足が start_date より新しくても通常返却（リグレッション防止）', async () => {
+		// fetchLimit は maxBars (5000) より遥かに小さく fetchHitCap=false。
+		// 最古足 (2024-01-01) は start_date (2024-01-10) より古いので、shortfall ガードは発動しない。
+		vi.mocked(getCandles).mockResolvedValue({
+			ok: true,
+			summary: 'ok',
+			data: { normalized: makeNormalized(50, '2024-01-01') },
+		} as never);
+		const result = await fetchCandlesForBacktest(
+			'btc_jpy',
+			'1D',
+			{ type: 'absolute', start: '2024-01-10', end: '2024-01-20' },
+			5,
+		);
+		expect(result[0].time).toBe('2024-01-05');
+	});
 });

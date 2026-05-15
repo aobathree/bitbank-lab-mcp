@@ -192,6 +192,19 @@ async function fetchByAbsoluteRange(
 
 	const uniqueCandles = await fetchRawCandles(pair, timeframe, fetchLimit);
 
+	// 取得上限に達した状態で、最古ローソク足が start_date より新しい → 容量制約による不足
+	const fetchHitCap = fetchLimit >= maxBars;
+	const earliestFetchedMs =
+		uniqueCandles.length > 0 ? dayjs(uniqueCandles[0].time).valueOf() : Number.POSITIVE_INFINITY;
+	if (fetchHitCap && earliestFetchedMs > startMs) {
+		const earliest = uniqueCandles[0].time.slice(0, 10);
+		throw new Error(
+			`Insufficient historical data: requested start_date=${start} but earliest available is ${earliest} ` +
+				`(hit API fetch cap of ${maxBars} bars for ${timeframe}). ` +
+				`Use a more recent start_date, switch to a coarser timeframe, or use period (1M~3Y) instead.`,
+		);
+	}
+
 	// end_date より後を除外
 	const inRange = uniqueCandles.filter((c) => dayjs(c.time).valueOf() <= endMs);
 	if (inRange.length === 0) {
@@ -206,8 +219,17 @@ async function fetchByAbsoluteRange(
 		throw new Error(`No candle data on or after start_date (${start})`);
 	}
 
+	// ウォームアップ分の本数が start_date より前に確保できているか検証
+	if (firstAtOrAfterStart < warmupBars) {
+		throw new Error(
+			`Insufficient warmup data: need ${warmupBars} bars before ${start} for indicator calculation, ` +
+				`but only ${firstAtOrAfterStart} available. ` +
+				`Use a more recent start_date or a strategy with shorter lookback.`,
+		);
+	}
+
 	// ウォームアップ分だけ start_date より前を含める
-	const warmupStartIdx = Math.max(0, firstAtOrAfterStart - warmupBars);
+	const warmupStartIdx = firstAtOrAfterStart - warmupBars;
 	return inRange.slice(warmupStartIdx);
 }
 
