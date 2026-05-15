@@ -58,6 +58,14 @@ function buildCandles(count: number) {
 	}));
 }
 
+function makeValidateOk(defaultParams: Record<string, number>) {
+	return (params: Record<string, number>) => ({
+		valid: true,
+		errors: [],
+		normalizedParams: { ...defaultParams, ...params },
+	});
+}
+
 function buildEngineResult() {
 	return {
 		input: {
@@ -176,11 +184,7 @@ describe('run_backtest', () => {
 			requiredBars: 20,
 			defaultParams: { period: 14, overbought: 70, oversold: 30 },
 			computeRequiredBars: () => 20,
-			validate: (params: Record<string, number>) => ({
-				valid: true,
-				errors: [],
-				normalizedParams: { period: 14, overbought: 70, oversold: 30, ...params },
-			}),
+			validate: makeValidateOk({ period: 14, overbought: 70, oversold: 30 }),
 		});
 		mocks.getPeriodBars.mockReturnValue(90);
 		mocks.fetchCandlesForBacktest.mockResolvedValue(buildCandles(40));
@@ -202,11 +206,7 @@ describe('run_backtest', () => {
 			requiredBars: 14,
 			defaultParams: { period: 14, overbought: 70, oversold: 30 },
 			computeRequiredBars: () => 14,
-			validate: (params: Record<string, number>) => ({
-				valid: true,
-				errors: [],
-				normalizedParams: { period: 14, overbought: 70, oversold: 30, ...params },
-			}),
+			validate: makeValidateOk({ period: 14, overbought: 70, oversold: 30 }),
 		});
 		mocks.fetchCandlesForBacktest.mockResolvedValue(buildCandles(90));
 		const engineResult = buildEngineResult();
@@ -239,11 +239,7 @@ describe('run_backtest', () => {
 			requiredBars: 14,
 			defaultParams: { period: 14, overbought: 70, oversold: 30 },
 			computeRequiredBars: () => 14,
-			validate: (params: Record<string, number>) => ({
-				valid: true,
-				errors: [],
-				normalizedParams: { period: 14, overbought: 70, oversold: 30, ...params },
-			}),
+			validate: makeValidateOk({ period: 14, overbought: 70, oversold: 30 }),
 		});
 		mocks.fetchCandlesForBacktest.mockResolvedValue(buildCandles(90));
 		const engineResult = buildEngineResult();
@@ -292,11 +288,7 @@ describe('run_backtest', () => {
 			requiredBars: 14,
 			defaultParams: { period: 14, overbought: 70, oversold: 30 },
 			computeRequiredBars: () => 14,
-			validate: (params: Record<string, number>) => ({
-				valid: true,
-				errors: [],
-				normalizedParams: { period: 14, overbought: 70, oversold: 30, ...params },
-			}),
+			validate: makeValidateOk({ period: 14, overbought: 70, oversold: 30 }),
 		});
 		mocks.fetchCandlesForBacktest.mockResolvedValue(buildCandles(1000));
 		const engineResult = buildEngineResult();
@@ -346,11 +338,7 @@ describe('run_backtest', () => {
 			requiredBars: 14,
 			defaultParams: { period: 14, overbought: 70, oversold: 30 },
 			computeRequiredBars: () => 14,
-			validate: (params: Record<string, number>) => ({
-				valid: true,
-				errors: [],
-				normalizedParams: { period: 14, overbought: 70, oversold: 30, ...params },
-			}),
+			validate: makeValidateOk({ period: 14, overbought: 70, oversold: 30 }),
 		});
 		mocks.fetchCandlesForBacktest.mockResolvedValue(buildCandles(500));
 		const engineResult = buildEngineResult();
@@ -387,11 +375,7 @@ describe('run_backtest', () => {
 			requiredBars: 14,
 			defaultParams: { period: 14, overbought: 70, oversold: 30 },
 			computeRequiredBars: () => 14,
-			validate: (params: Record<string, number>) => ({
-				valid: true,
-				errors: [],
-				normalizedParams: { period: 14, overbought: 70, oversold: 30, ...params },
-			}),
+			validate: makeValidateOk({ period: 14, overbought: 70, oversold: 30 }),
 		});
 		mocks.fetchCandlesForBacktest.mockResolvedValue(buildCandles(90));
 		mocks.runBacktestEngine.mockReturnValue(buildEngineResult());
@@ -415,11 +399,7 @@ describe('run_backtest', () => {
 			requiredBars: 20,
 			defaultParams: { period: 14, overbought: 70, oversold: 30 },
 			computeRequiredBars: () => 20,
-			validate: (params: Record<string, number>) => ({
-				valid: true,
-				errors: [],
-				normalizedParams: { period: 14, overbought: 70, oversold: 30, ...params },
-			}),
+			validate: makeValidateOk({ period: 14, overbought: 70, oversold: 30 }),
 		});
 		mocks.getPeriodBars.mockReturnValue(90);
 		mocks.fetchCandlesForBacktest.mockResolvedValue(buildCandles(90));
