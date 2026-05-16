@@ -337,17 +337,21 @@ describe('analyze_my_portfolio', () => {
 		});
 
 		assertOk(result);
-		// 各 Private API の最初のページ（since 未指定）が含まれること
+		// 各 Private API の呼び出しが存在すること
 		const tradeUrls = seenUrls.filter((u) => u.includes('trade_history'));
 		const depositUrls = seenUrls.filter((u) => u.includes('deposit_history'));
 		const withdrawalUrls = seenUrls.filter((u) => u.includes('withdrawal_history'));
 		expect(tradeUrls.length).toBeGreaterThan(0);
 		expect(depositUrls.length).toBeGreaterThan(0);
 		expect(withdrawalUrls.length).toBeGreaterThan(0);
-		// 初回呼び出しに since= が含まれない（全履歴取得）
-		expect(tradeUrls[0]).not.toMatch(/[?&]since=/);
-		expect(depositUrls[0]).not.toMatch(/[?&]since=/);
-		expect(withdrawalUrls[0]).not.toMatch(/[?&]since=/);
+		// 全 URL に since= が含まれない（ハンドラからの全履歴取得）。
+		// 注意: paginate*/fetchDepositWithdrawal は 2 ページ目以降で内部的に since を使う。
+		// 現フィクスチャは各エンドポイント < PAGE_SIZE のため 1 ページで完結し、追加コールは
+		// 発生しない。フィクスチャが PAGE_SIZE 超に拡大した際は、page=0 のみを抜き出して
+		// 検証する形にリファクタすること。
+		for (const u of [...tradeUrls, ...depositUrls, ...withdrawalUrls]) {
+			expect(u).not.toMatch(/[?&]since=/);
+		}
 	});
 
 	it('年初前入金で形成された保有: account_return_jpy は年初前入金も含めた純投入額に対して計算される', async () => {
