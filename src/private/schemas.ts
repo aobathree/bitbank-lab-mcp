@@ -87,7 +87,12 @@ export const GetMyTradeHistoryMetaSchema = z.object({
 	fetchedAt: z.string(),
 	tradeCount: z.number().int(),
 	pair: z.string().optional(),
-	isComplete: z.boolean().optional(),
+	isComplete: z
+		.boolean()
+		.optional()
+		.describe(
+			'期間内全件を取得できたか。count 制限で打ち切られた場合や MAX_PAGES 到達時は false（取得範囲外に未取得レコードがある可能性）',
+		),
 });
 
 export const GetMyTradeHistoryOutputSchema = z.union([

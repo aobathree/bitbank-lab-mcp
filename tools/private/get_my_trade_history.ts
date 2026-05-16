@@ -40,8 +40,9 @@ const PAGE_SIZE = 1000;
 const MAX_PAGES = 10;
 
 /**
- * cursor ベースの自動ページネーション（asc 順で取得し、最後の executed_at + 1 を since に）。
- * since/end が外部指定されている場合でもページネーションする。
+ * cursor ベースの自動ページネーション（asc 順で取得し、最後の executed_at を次ページ since に）。
+ * 同一ミリ秒の境界レコードを取りこぼさないため、since はインクリメントせず、
+ * trade_id で重複排除する。since/end が外部指定されている場合でもページネーションする。
  */
 async function paginateTrades(
 	client: BitbankPrivateClient,
@@ -49,6 +50,7 @@ async function paginateTrades(
 	limit: number,
 ): Promise<{ trades: RawTrade[]; isComplete: boolean }> {
 	const all: RawTrade[] = [];
+	const seenIds = new Set<number>();
 	let since: string | undefined = baseParams.since;
 
 	for (let page = 0; page < MAX_PAGES; page++) {
@@ -63,22 +65,29 @@ async function paginateTrades(
 			Object.keys(params).length > 0 ? params : undefined,
 		);
 		const batch = rawData.trades || [];
-		all.push(...batch);
+		const newRecords = batch.filter((t) => !seenIds.has(t.trade_id));
+		for (const t of newRecords) seenIds.add(t.trade_id);
+		all.push(...newRecords);
 
 		// 取得件数が PAGE_SIZE 未満 → 全件取得完了
 		if (batch.length < PAGE_SIZE) {
 			return { trades: all.slice(0, limit), isComplete: true };
 		}
 
-		// limit に達したら打ち切り（全件取得済みかは不明）
+		// limit に達したら打ち切り。count を満たしただけで、期間内に未取得レコードがある可能性があるため isComplete=false
 		if (all.length >= limit) {
-			return { trades: all.slice(0, limit), isComplete: true };
+			return { trades: all.slice(0, limit), isComplete: false };
 		}
 
-		// 次ページ: 最後の約定の executed_at + 1ms を since に
+		// 同一タイムスタンプが PAGE_SIZE 件以上連続して進捗しない場合の保険
+		if (newRecords.length === 0) {
+			return { trades: all.slice(0, limit), isComplete: false };
+		}
+
+		// 次ページ: 最後の約定の executed_at を since に（同一 ts のレコードを次ページに含めて再取得し、dedup する）
 		const lastTs = batch[batch.length - 1]?.executed_at;
 		if (!lastTs) break;
-		since = String(lastTs + 1);
+		since = String(lastTs);
 	}
 
 	// MAX_PAGES 到達 → 打ち切り
