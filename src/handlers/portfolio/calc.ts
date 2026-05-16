@@ -21,9 +21,15 @@ import type {
 
 // ── 損益計算エンジン ──
 
+// bitbank の現物手数料体系:
+//   買い: 手数料は base 通貨で発生（feeBase > 0, feeQuote = 0）
+//   売り: 手数料は quote 通貨で発生（feeQuote > 0, feeBase = 0）
+// 両方が同時に非ゼロになるケースは API 仕様上想定されないが、
+// 防御的にどちらも参照しても算術的に正しくなるロジックを採用する。
+
 /**
  * 約定履歴と暗号資産出庫から通貨ごとの平均取得単価と実現損益を算出する。
- * 移動平均法（総平均法）を採用。手数料（fee_amount_quote）を考慮。
+ * 移動平均法（総平均法）を採用。両 side の手数料（fee_amount_base / fee_amount_quote）を考慮。
  *
  * 暗号資産出庫（crypto withdrawal）は「売却」ではなく原価の按分減少として扱う:
  *   - holdingQty と holdingCost を平均単価ベースで減らす
@@ -70,13 +76,14 @@ export function calcPnl(trades: RawTrade[], asset: string, withdrawals?: RawWith
 			const price = Number(t.price);
 			if (!Number.isFinite(qty) || !Number.isFinite(price)) continue;
 
-			// 決済通貨（JPY）建ての手数料
+			// 決済通貨（JPY）建ての手数料 / 基軸通貨建ての手数料
 			const feeQuote = Number(t.fee_amount_quote) || 0;
+			const feeBase = Number(t.fee_amount_base) || 0;
 
 			if (t.side === 'buy') {
-				// 買い: 約定金額 + 手数料 = 取得原価
+				// 買い: JPY 出 = qty * price + feeQuote、base 入 = qty - feeBase
 				holdingCost += qty * price + feeQuote;
-				holdingQty += qty;
+				holdingQty += qty - feeBase;
 			} else {
 				// sell: 移動平均法で原価を按分
 				if (holdingQty > 0) {
@@ -156,11 +163,13 @@ export function calcPeriodRealizedPnl(
 		if (!Number.isFinite(qty) || !Number.isFinite(price)) continue;
 
 		const feeQuote = Number(t.fee_amount_quote) || 0;
+		const feeBase = Number(t.fee_amount_base) || 0;
 		const h = holdings.get(asset) ?? { qty: 0, cost: 0 };
 
 		if (t.side === 'buy') {
+			// 買い: JPY 出 = qty * price + feeQuote、base 入 = qty - feeBase
 			h.cost += qty * price + feeQuote;
-			h.qty += qty;
+			h.qty += qty - feeBase;
 		} else {
 			// sell
 			let sellRealized = 0;
@@ -373,14 +382,15 @@ export function reconstructHoldingsAtDate(
 		const qty = Number(t.amount);
 		const price = Number(t.price);
 		const feeQuote = Number(t.fee_amount_quote) || 0;
+		const feeBase = Number(t.fee_amount_base) || 0;
 		if (!Number.isFinite(qty) || !Number.isFinite(price)) continue;
 
 		const current = holdings.get(asset) ?? 0;
 		const currentJpy = holdings.get('jpy') ?? 0;
 
 		if (t.side === 'buy') {
-			// Reverse buy: remove crypto, add back JPY spent
-			const newAmount = current - qty;
+			// Reverse buy: 買いで実際に増えた base 量は qty - feeBase。それを巻き戻す。
+			const newAmount = current - (qty - feeBase);
 			if (newAmount < 1e-12) {
 				holdings.delete(asset);
 			} else {
