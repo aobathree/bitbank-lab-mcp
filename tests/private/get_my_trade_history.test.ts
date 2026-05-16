@@ -316,7 +316,10 @@ describe('get_my_trade_history — ページネーション', () => {
 		expect(result.meta.tradeCount).toBe(1500);
 	});
 
-	it('ページネーションで次ページの since に executed_at + 1 を使う', async () => {
+	it('ページネーションで次ページの since に最後の executed_at をそのまま使う（境界バグ修正）', async () => {
+		// バグ回帰防止: 旧実装は executed_at + 1 を since に渡していたため、同一ミリ秒の
+		// 境界レコードを次ページで取りこぼしていた。新実装は executed_at をそのまま渡し、
+		// trade_id で dedup する。
 		const page1 = generateTrades(1000, 1, 1710000000000);
 		const lastTimestamp = page1[page1.length - 1].executed_at; // 1710000999000
 		const page2 = generateTrades(100, 1001, lastTimestamp + 1);
@@ -329,10 +332,11 @@ describe('get_my_trade_history — ページネーション', () => {
 		const { default: getMyTradeHistory } = await import('../../tools/private/get_my_trade_history.js');
 		await getMyTradeHistory({ count: 2000 });
 
-		// 2回目のリクエストの URL に since=lastTimestamp+1 が含まれる
+		// 2回目のリクエストの URL に since=lastTimestamp が含まれる（+1 されていない）
 		expect(mockFn.mock.calls.length).toBe(2);
 		const secondCallUrl = mockFn.mock.calls[1][0] as string;
-		expect(secondCallUrl).toContain(`since=${lastTimestamp + 1}`);
+		expect(secondCallUrl).toContain(`since=${lastTimestamp}`);
+		expect(secondCallUrl).not.toContain(`since=${lastTimestamp + 1}`);
 	});
 
 	it('MAX_PAGES に達すると isComplete=false で打ち切り通知', async () => {
@@ -386,6 +390,191 @@ describe('get_my_trade_history — ページネーション', () => {
 
 		assertOk(result);
 		expect(result.data.trades).toHaveLength(0);
+		expect(result.meta.isComplete).toBe(true);
+	});
+
+	it('ページ境界に同一 executed_at のレコードが跨っていても全件取得できる（境界バグ修正）', async () => {
+		// バグ回帰防止: 旧実装は executed_at + 1 を次ページ since にしていたため、
+		// ページ末尾と次ページ先頭に同じ executed_at が存在すると取りこぼしていた。
+		// 新実装は executed_at をそのまま使い、trade_id ベースで dedup する。
+		// page1: 末尾 3 件（id 998-1000）が同一 executed_at = T_boundary
+		// page2: 先頭 2 件（id 998, 1000）が page1 と重複（同一 ts のため API が再返却）
+		//        続く 3 件（id 1001-1003）が新規
+		const tBoundary = 1710000999000;
+		const page1 = Array.from({ length: 1000 }, (_, i) => ({
+			trade_id: i + 1,
+			pair: 'btc_jpy',
+			order_id: 5000 + i,
+			side: 'buy',
+			type: 'limit',
+			amount: '0.01',
+			price: '15000000',
+			maker_taker: 'maker',
+			fee_amount_base: '0.00001',
+			fee_amount_quote: '0',
+			executed_at: i < 997 ? 1710000000000 + i * 1000 : tBoundary,
+		}));
+		const page2 = [
+			// 同一 ts の前ページ末尾 2 件が再出現（dedup される）
+			{
+				trade_id: 998,
+				pair: 'btc_jpy',
+				order_id: 5997,
+				side: 'buy',
+				type: 'limit',
+				amount: '0.01',
+				price: '15000000',
+				maker_taker: 'maker',
+				fee_amount_base: '0.00001',
+				fee_amount_quote: '0',
+				executed_at: tBoundary,
+			},
+			{
+				trade_id: 1000,
+				pair: 'btc_jpy',
+				order_id: 5999,
+				side: 'buy',
+				type: 'limit',
+				amount: '0.01',
+				price: '15000000',
+				maker_taker: 'maker',
+				fee_amount_base: '0.00001',
+				fee_amount_quote: '0',
+				executed_at: tBoundary,
+			},
+			// 旧実装ではここからスキップされていた同一 ts の残レコード
+			{
+				trade_id: 1001,
+				pair: 'btc_jpy',
+				order_id: 6001,
+				side: 'sell',
+				type: 'limit',
+				amount: '0.01',
+				price: '15000000',
+				maker_taker: 'maker',
+				fee_amount_base: '0',
+				fee_amount_quote: '150',
+				executed_at: tBoundary,
+			},
+			{
+				trade_id: 1002,
+				pair: 'btc_jpy',
+				order_id: 6002,
+				side: 'sell',
+				type: 'limit',
+				amount: '0.01',
+				price: '15000000',
+				maker_taker: 'maker',
+				fee_amount_base: '0',
+				fee_amount_quote: '150',
+				executed_at: tBoundary,
+			},
+			{
+				trade_id: 1003,
+				pair: 'btc_jpy',
+				order_id: 6003,
+				side: 'sell',
+				type: 'limit',
+				amount: '0.01',
+				price: '15000000',
+				maker_taker: 'maker',
+				fee_amount_base: '0',
+				fee_amount_quote: '150',
+				executed_at: tBoundary + 1000,
+			},
+		];
+
+		setupSequentialFetchMock([mockBitbankSuccess({ trades: page1 }), mockBitbankSuccess({ trades: page2 })]);
+
+		const { default: getMyTradeHistory } = await import('../../tools/private/get_my_trade_history.js');
+		const result = await getMyTradeHistory({ count: 2000, order: 'asc' });
+
+		assertOk(result);
+		// 全 1003 件（page1 1000 + page2 新規 3）が取得され、重複 2 件は dedup される
+		expect(result.data.trades).toHaveLength(1003);
+		const ids = result.data.trades.map((t) => t.trade_id);
+		// 同一 ts の残レコード（1001, 1002, 1003）が含まれている
+		expect(ids).toContain(1001);
+		expect(ids).toContain(1002);
+		expect(ids).toContain(1003);
+		// 重複は 1 件だけ
+		const uniqueIds = new Set(ids);
+		expect(uniqueIds.size).toBe(ids.length);
+	});
+
+	it('count を満たして打ち切ったときは isComplete=false（取り切れた保証はない）', async () => {
+		// バグ回帰防止 (Medium 2): 旧実装は count に達したら isComplete=true を返していたが、
+		// 期間内にまだ未取得レコードがある可能性があるため誤誘導していた。
+		// page1: 1000 件（満杯）→ page2: 1000 件（満杯）= 計 2000 件で count を満たす。
+		// 期間内にさらにレコードがあるかは分からないため isComplete=false が正しい。
+		const page1 = generateTrades(1000, 1, 1710000000000);
+		const page2 = generateTrades(1000, 1001, 1710001000000);
+
+		setupSequentialFetchMock([mockBitbankSuccess({ trades: page1 }), mockBitbankSuccess({ trades: page2 })]);
+
+		const { default: getMyTradeHistory } = await import('../../tools/private/get_my_trade_history.js');
+		const result = await getMyTradeHistory({ count: 2000 });
+
+		assertOk(result);
+		expect(result.data.trades).toHaveLength(2000);
+		expect(result.meta.isComplete).toBe(false);
+		expect(result.summary).toContain('全件ではなく一部のみ取得されています');
+	});
+
+	it('全件同一 executed_at で進捗ゼロのとき isComplete=false で無限ループせず打ち切る', async () => {
+		// 同一 ts が PAGE_SIZE 件以上連続するエッジケース。新実装は since=lastTs にしているため、
+		// 次ページが同じ範囲を返し続けて進捗ゼロになると無限ループする可能性がある。
+		// 進捗ゼロ検出により isComplete=false で打ち切られることを検証。
+		const sameTs = 1710000000000;
+		const page1 = Array.from({ length: 1000 }, (_, i) => ({
+			trade_id: i + 1,
+			pair: 'btc_jpy',
+			order_id: 5000 + i,
+			side: 'buy',
+			type: 'limit',
+			amount: '0.01',
+			price: '15000000',
+			maker_taker: 'maker',
+			fee_amount_base: '0.00001',
+			fee_amount_quote: '0',
+			executed_at: sameTs,
+		}));
+		// 次ページ以降も全く同じレコードを返す（API が since=sameTs で同じ範囲を返却する想定）
+		const responses = [mockBitbankSuccess({ trades: page1 }), mockBitbankSuccess({ trades: page1 })];
+		const mockFn = setupSequentialFetchMock(responses);
+
+		const { default: getMyTradeHistory } = await import('../../tools/private/get_my_trade_history.js');
+		const result = await getMyTradeHistory({ count: 5000 });
+
+		assertOk(result);
+		// 1 ページ目で 1000 件取得 → 2 ページ目で全件重複 → 進捗ゼロで打ち切り
+		expect(result.data.trades).toHaveLength(1000);
+		expect(result.meta.isComplete).toBe(false);
+		// MAX_PAGES (10) より早く打ち切られたことを fetch 呼び出し回数で確認
+		expect(mockFn.mock.calls.length).toBeLessThan(10);
+	});
+
+	it('連続ページで重複する trade_id は dedup される', async () => {
+		// page2 の先頭が page1 の末尾と同じ trade_id を返すケース（境界バグ修正の副作用）。
+		// dedup により最終結果に 1 件だけ含まれることを検証。
+		// page2 は 999 件（< PAGE_SIZE）に抑え、ループが自然終了するようにする。
+		const page1 = generateTrades(1000, 1, 1710000000000);
+		// page2 の先頭 2 件を page1 末尾と意図的に重複させる
+		const lastTwo = page1.slice(-2);
+		const newRecords = generateTrades(997, 1001, 1710001000000);
+		const page2 = [...lastTwo, ...newRecords];
+
+		setupSequentialFetchMock([mockBitbankSuccess({ trades: page1 }), mockBitbankSuccess({ trades: page2 })]);
+
+		const { default: getMyTradeHistory } = await import('../../tools/private/get_my_trade_history.js');
+		const result = await getMyTradeHistory({ count: 3000 });
+
+		assertOk(result);
+		// 1000 (page1) + 997 (page2 新規) = 1997 件
+		expect(result.data.trades).toHaveLength(1997);
+		const ids = result.data.trades.map((t) => t.trade_id);
+		expect(new Set(ids).size).toBe(ids.length);
+		// page2 が PAGE_SIZE 未満なので全件取得完了
 		expect(result.meta.isComplete).toBe(true);
 	});
 });
