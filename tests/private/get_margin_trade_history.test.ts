@@ -265,6 +265,65 @@ describe('get_margin_trade_history', () => {
 		expect(result.summary).not.toContain('損益');
 	});
 
+	it('fee_occurred_amount_quote が API レスポンスに含まれる場合、出力に伝播する', async () => {
+		const response = {
+			trades: [
+				{
+					trade_id: 801,
+					pair: 'btc_jpy',
+					order_id: 8001,
+					side: 'sell',
+					position_side: 'long',
+					type: 'market',
+					amount: '0.01',
+					price: '15500000',
+					maker_taker: 'taker',
+					fee_amount_base: '0',
+					fee_amount_quote: '500',
+					fee_occurred_amount_quote: '500',
+					executed_at: 1710000000000,
+				},
+			],
+		};
+		setupFetchMock(mockBitbankSuccess(response));
+
+		const { default: getMarginTradeHistory } = await import('../../tools/private/get_margin_trade_history.js');
+		const result = await getMarginTradeHistory({});
+
+		assertOk(result);
+		expect(result.data.trades[0].fee_occurred_amount_quote).toBe('500');
+	});
+
+	it('fee_occurred_amount_quote が API レスポンスに含まれない場合、undefined を伝播する（fallback しない）', async () => {
+		const response = {
+			trades: [
+				{
+					trade_id: 802,
+					pair: 'btc_jpy',
+					order_id: 8002,
+					side: 'sell',
+					position_side: 'long',
+					type: 'market',
+					amount: '0.01',
+					price: '15500000',
+					maker_taker: 'taker',
+					fee_amount_base: '0',
+					fee_amount_quote: '500',
+					executed_at: 1710000000000,
+				},
+			],
+		};
+		setupFetchMock(mockBitbankSuccess(response));
+
+		const { default: getMarginTradeHistory } = await import('../../tools/private/get_margin_trade_history.js');
+		const result = await getMarginTradeHistory({});
+
+		assertOk(result);
+		expect(result.data.trades[0].fee_occurred_amount_quote).toBeUndefined();
+		// fallback で fee_amount_quote の値で埋めないことを明示的にアサート
+		expect(result.data.trades[0].fee_occurred_amount_quote).not.toBe(result.data.trades[0].fee_amount_quote);
+	});
+
 	it('空の trades で 0 件メッセージを返す', async () => {
 		setupFetchMock(mockBitbankSuccess({ trades: [] }));
 

@@ -29,6 +29,7 @@ interface RawTrade {
 	maker_taker: string;
 	fee_amount_base: string;
 	fee_amount_quote: string;
+	fee_occurred_amount_quote?: string;
 	profit_loss?: string;
 	interest?: string;
 	executed_at: number;
@@ -149,6 +150,7 @@ export default async function getMyTradeHistory(args: {
 			maker_taker: t.maker_taker,
 			fee_amount_base: t.fee_amount_base,
 			fee_amount_quote: t.fee_amount_quote,
+			fee_occurred_amount_quote: t.fee_occurred_amount_quote,
 			executed_at: toIsoMs(t.executed_at) ?? String(t.executed_at),
 		}));
 

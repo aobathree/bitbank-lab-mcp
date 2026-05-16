@@ -77,6 +77,7 @@ export const rawTradeHistoryResponse = {
 			maker_taker: 'maker',
 			fee_amount_base: '0.00001',
 			fee_amount_quote: '0',
+			fee_occurred_amount_quote: '0',
 			executed_at: 1710000000000,
 		},
 		{
@@ -90,6 +91,7 @@ export const rawTradeHistoryResponse = {
 			maker_taker: 'taker',
 			fee_amount_base: '0',
 			fee_amount_quote: '77.5',
+			fee_occurred_amount_quote: '77.5',
 			executed_at: 1710000100000,
 		},
 		{
@@ -103,6 +105,7 @@ export const rawTradeHistoryResponse = {
 			maker_taker: 'maker',
 			fee_amount_base: '0.001',
 			fee_amount_quote: '0',
+			fee_occurred_amount_quote: '0',
 			executed_at: 1710000200000,
 		},
 	],
@@ -262,6 +265,7 @@ export const rawMarginTradeHistoryResponse = {
 			maker_taker: 'maker',
 			fee_amount_base: '0.00001',
 			fee_amount_quote: '0',
+			fee_occurred_amount_quote: '0',
 			executed_at: 1710000000000,
 		},
 		{
@@ -276,6 +280,7 @@ export const rawMarginTradeHistoryResponse = {
 			maker_taker: 'taker',
 			fee_amount_base: '0',
 			fee_amount_quote: '155',
+			fee_occurred_amount_quote: '155',
 			profit_loss: '5000',
 			interest: '30',
 			executed_at: 1710000100000,
@@ -292,6 +297,7 @@ export const rawMarginTradeHistoryResponse = {
 			maker_taker: 'maker',
 			fee_amount_base: '0.001',
 			fee_amount_quote: '0',
+			fee_occurred_amount_quote: '0',
 			executed_at: 1710000200000,
 		},
 	],

@@ -167,6 +167,59 @@ describe('get_my_trade_history', () => {
 		expect(result.summary).toContain('ECONNREFUSED');
 	});
 
+	it('fee_occurred_amount_quote が API レスポンスに含まれる場合、出力に伝播する', async () => {
+		const trades = [
+			{
+				trade_id: 701,
+				pair: 'btc_jpy',
+				order_id: 7001,
+				side: 'sell',
+				type: 'market',
+				amount: '0.01',
+				price: '15500000',
+				maker_taker: 'taker',
+				fee_amount_base: '0',
+				fee_amount_quote: '500',
+				fee_occurred_amount_quote: '500',
+				executed_at: 1710000000000,
+			},
+		];
+		setupFetchMock(mockBitbankSuccess({ trades }));
+
+		const { default: getMyTradeHistory } = await import('../../tools/private/get_my_trade_history.js');
+		const result = await getMyTradeHistory({});
+
+		assertOk(result);
+		expect(result.data.trades[0].fee_occurred_amount_quote).toBe('500');
+	});
+
+	it('fee_occurred_amount_quote が API レスポンスに含まれない場合、undefined を伝播する（fallback しない）', async () => {
+		const trades = [
+			{
+				trade_id: 702,
+				pair: 'btc_jpy',
+				order_id: 7002,
+				side: 'sell',
+				type: 'market',
+				amount: '0.01',
+				price: '15500000',
+				maker_taker: 'taker',
+				fee_amount_base: '0',
+				fee_amount_quote: '500',
+				executed_at: 1710000000000,
+			},
+		];
+		setupFetchMock(mockBitbankSuccess({ trades }));
+
+		const { default: getMyTradeHistory } = await import('../../tools/private/get_my_trade_history.js');
+		const result = await getMyTradeHistory({});
+
+		assertOk(result);
+		expect(result.data.trades[0].fee_occurred_amount_quote).toBeUndefined();
+		// fallback で fee_amount_quote の値で埋めないことを明示的にアサート
+		expect(result.data.trades[0].fee_occurred_amount_quote).not.toBe(result.data.trades[0].fee_amount_quote);
+	});
+
 	it('asc 順で10件超の場合は末尾10件を表示する', async () => {
 		const trades = Array.from({ length: 12 }, (_, i) => ({
 			trade_id: 300 + i,

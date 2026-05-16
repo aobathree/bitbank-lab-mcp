@@ -71,6 +71,10 @@ const TradeItemSchema = z.object({
 	maker_taker: z.string().describe('メイカー / テイカー'),
 	fee_amount_base: z.string().describe('手数料（基軸通貨）'),
 	fee_amount_quote: z.string().describe('手数料（決済通貨）'),
+	fee_occurred_amount_quote: z
+		.string()
+		.optional()
+		.describe('実際に発生した決済通貨手数料（現物では fee_amount_quote と同値、信用で乖離する可能性）'),
 	executed_at: z.string().describe('約定日時（ISO8601）'),
 });
 
@@ -530,6 +534,10 @@ const MarginTradeItemSchema = z.object({
 	maker_taker: z.string().describe('メイカー / テイカー'),
 	fee_amount_base: z.string().describe('手数料（基軸通貨）'),
 	fee_amount_quote: z.string().describe('手数料（決済通貨）'),
+	fee_occurred_amount_quote: z
+		.string()
+		.optional()
+		.describe('実際に発生した決済通貨手数料（現物では fee_amount_quote と同値、信用で乖離する可能性）'),
 	profit_loss: z.string().optional().describe('実現損益（決済時のみ）'),
 	interest: z.string().optional().describe('利息（決済時のみ）'),
 	executed_at: z.string().describe('約定日時（ISO8601）'),

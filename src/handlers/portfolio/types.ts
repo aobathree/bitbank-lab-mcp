@@ -29,6 +29,7 @@ export interface RawTrade {
 	maker_taker: string;
 	fee_amount_base: string;
 	fee_amount_quote: string;
+	fee_occurred_amount_quote?: string;
 	executed_at: number;
 }
 
