@@ -40,30 +40,35 @@ const PAGE_SIZE = 1000;
 const MAX_PAGES = 10;
 
 /**
- * cursor ベースの自動ページネーション（asc 順で取得し、最後の executed_at を次ページ since に）。
- * 同一ミリ秒の境界レコードを取りこぼさないため、since はインクリメントせず、
- * trade_id で重複排除する。since/end が外部指定されている場合でもページネーションする。
+ * cursor ベースの自動ページネーション。
+ *
+ * order に応じてカーソル方向を切り替える:
+ * - asc: `since` を最後の約定の executed_at で前進させる
+ * - desc: `end` を最後の約定（= batch 末尾 = 最古）の executed_at で後退させる
+ *
+ * いずれも同一ミリ秒の境界レコードを取りこぼさないため、カーソルはインクリメントせず、
+ * trade_id で重複排除する。since/end が外部指定されている場合でも、指定されていない側の
+ * 境界は preserve され、カーソル側だけが各ページで上書きされる。
  */
 async function paginateTrades(
 	client: BitbankPrivateClient,
 	baseParams: Record<string, string>,
 	limit: number,
+	order: 'asc' | 'desc',
 ): Promise<{ trades: RawTrade[]; isComplete: boolean }> {
 	const all: RawTrade[] = [];
 	const seenIds = new Set<number>();
-	let since: string | undefined = baseParams.since;
+	const cursorKey: 'since' | 'end' = order === 'desc' ? 'end' : 'since';
+	let cursor: string | undefined = baseParams[cursorKey];
 
 	for (let page = 0; page < MAX_PAGES; page++) {
 		const params: Record<string, string> = {
 			...baseParams,
 			count: String(PAGE_SIZE),
-			order: 'asc',
-			...(since ? { since } : {}),
+			order,
+			...(cursor ? { [cursorKey]: cursor } : {}),
 		};
-		const rawData = await client.get<{ trades: RawTrade[] }>(
-			'/v1/user/spot/trade_history',
-			Object.keys(params).length > 0 ? params : undefined,
-		);
+		const rawData = await client.get<{ trades: RawTrade[] }>('/v1/user/spot/trade_history', params);
 		const batch = rawData.trades || [];
 		const newRecords = batch.filter((t) => !seenIds.has(t.trade_id));
 		for (const t of newRecords) seenIds.add(t.trade_id);
@@ -84,10 +89,12 @@ async function paginateTrades(
 			return { trades: all.slice(0, limit), isComplete: false };
 		}
 
-		// 次ページ: 最後の約定の executed_at を since に（同一 ts のレコードを次ページに含めて再取得し、dedup する）
+		// 次ページ: batch 末尾の executed_at をカーソルに。
+		// asc → 末尾は最新 → since を前進。 desc → 末尾は最古 → end を後退。
+		// 同一 ts のレコードを次ページに含めて再取得し、dedup する。
 		const lastTs = batch[batch.length - 1]?.executed_at;
 		if (!lastTs) break;
-		since = String(lastTs);
+		cursor = String(lastTs);
 	}
 
 	// MAX_PAGES 到達 → 打ち切り
@@ -139,8 +146,8 @@ export default async function getMyTradeHistory(args: {
 			// 取得件数が count 未満なら全件取得済み
 			isComplete = rawTrades.length < count;
 		} else {
-			// 自動ページネーション
-			const result = await paginateTrades(client, baseParams, count);
+			// 自動ページネーション（order に応じて asc + since / desc + end カーソルで取得）
+			const result = await paginateTrades(client, baseParams, count, order);
 			rawTrades = result.trades;
 			isComplete = result.isComplete;
 		}
@@ -162,11 +169,6 @@ export default async function getMyTradeHistory(args: {
 			fee_occurred_amount_quote: t.fee_occurred_amount_quote,
 			executed_at: toIsoMs(t.executed_at) ?? String(t.executed_at),
 		}));
-
-		// desc 指定時は逆順にソート（ページネーションは asc で取得するため）
-		if (order === 'desc') {
-			trades.reverse();
-		}
 
 		// サマリー文字列の生成
 		const lines: string[] = [];

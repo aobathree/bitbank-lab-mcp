@@ -45,7 +45,11 @@ const PAGE_SIZE = 1000;
 const MAX_PAGES = 10;
 
 /**
- * cursor ベースの自動ページネーション（asc 順で取得し、最後の executed_at を次ページ since に）。
+ * cursor ベースの自動ページネーション。
+ *
+ * order に応じてカーソル方向を切り替える:
+ * - asc: `since` を最後の約定の executed_at で前進
+ * - desc: `end` を最後の約定（= batch 末尾 = 最古）の executed_at で後退
  *
  * `paginateTrades` (get_my_trade_history) との違い:
  * - `type=margin` を毎回付与し、レスポンスから `position_side != null` で margin のみに絞る
@@ -54,25 +58,27 @@ const MAX_PAGES = 10;
  *   現物比率が高いとき早期終了して次ページの信用約定を取り逃がす）。
  * - カーソル前進有無で進捗停止を検出する（同一ミリ秒の境界レコードでループしないよう）。
  *
- * 同一ミリ秒の境界レコードを取りこぼさないため、since はインクリメントせず、
+ * 同一ミリ秒の境界レコードを取りこぼさないため、カーソルはインクリメントせず、
  * trade_id で重複排除する。since/end が外部指定されている場合でもページネーションする。
  */
 async function paginateMarginTrades(
 	client: BitbankPrivateClient,
 	baseParams: Record<string, string>,
 	limit: number,
+	order: 'asc' | 'desc',
 ): Promise<{ trades: RawMarginTrade[]; isComplete: boolean }> {
 	const all: RawMarginTrade[] = [];
 	const seenIds = new Set<number>();
-	let since: string | undefined = baseParams.since;
+	const cursorKey: 'since' | 'end' = order === 'desc' ? 'end' : 'since';
+	let cursor: string | undefined = baseParams[cursorKey];
 
 	for (let page = 0; page < MAX_PAGES; page++) {
 		const params: Record<string, string> = {
 			...baseParams,
 			type: 'margin',
 			count: String(PAGE_SIZE),
-			order: 'asc',
-			...(since ? { since } : {}),
+			order,
+			...(cursor ? { [cursorKey]: cursor } : {}),
 		};
 		const rawData = await client.get<{ trades: RawMarginTrade[] }>('/v1/user/spot/trade_history', params);
 		const batch = rawData.trades || [];
@@ -96,15 +102,15 @@ async function paginateMarginTrades(
 			return { trades: all.slice(0, limit), isComplete: true };
 		}
 
-		// 次ページ: 最後の約定の executed_at を since に（同一 ts のレコードを次ページに含めて再取得し、dedup する）
+		// 次ページ: batch 末尾の executed_at をカーソルに（同一 ts のレコードを次ページに含めて再取得し、dedup する）
 		const lastTs = batch[batch.length - 1]?.executed_at;
 		if (!lastTs) break;
-		const nextSince = String(lastTs);
-		// カーソル停滞検知: since が前進しない（API が同じ範囲を返し続ける）と無限ループになるので打ち切る
-		if (nextSince === since) {
+		const nextCursor = String(lastTs);
+		// カーソル停滞検知: cursor が前進/後退しない（API が同じ範囲を返し続ける）と無限ループになるので打ち切る
+		if (nextCursor === cursor) {
 			return { trades: all.slice(0, limit), isComplete: false };
 		}
-		since = nextSince;
+		cursor = nextCursor;
 	}
 
 	// MAX_PAGES 到達 → 打ち切り
@@ -146,11 +152,8 @@ export default async function getMarginTradeHistory(args: {
 		let rawTrades: RawMarginTrade[];
 		let isComplete: boolean;
 
-		// ページネーションは内部で asc 固定で取得するので、ユーザーが desc を要求している場合は逆順にする。
-		// 単発リクエストは API に order をそのまま渡すため逆順処理は不要（API レスポンスを尊重）。
-		let usedPagination = false;
 		if (count <= PAGE_SIZE) {
-			// 単発リクエスト
+			// 単発リクエスト（API に order をそのまま渡す）
 			const params: Record<string, string> = { ...baseParams, type: 'margin' };
 			if (count !== 20) params.count = String(count);
 			if (order !== 'desc') params.order = order;
@@ -162,9 +165,8 @@ export default async function getMarginTradeHistory(args: {
 			// （フィルタ後の長さで判定すると、現物比率が高いとき誤って打ち切る）。
 			isComplete = rawData.trades.length < count;
 		} else {
-			// 自動ページネーション
-			usedPagination = true;
-			const result = await paginateMarginTrades(client, baseParams, count);
+			// 自動ページネーション（order に応じて asc + since / desc + end カーソルで取得）
+			const result = await paginateMarginTrades(client, baseParams, count, order);
 			rawTrades = result.trades;
 			isComplete = result.isComplete;
 		}
@@ -189,11 +191,6 @@ export default async function getMarginTradeHistory(args: {
 			interest: t.interest,
 			executed_at: toIsoMs(t.executed_at) ?? String(t.executed_at),
 		}));
-
-		// ページネーション経由の場合は asc 固定で取得しているので、desc 要求なら逆順に並べ直す。
-		if (usedPagination && order === 'desc') {
-			trades.reverse();
-		}
 
 		// サマリー文字列の生成
 		const lines: string[] = [];
