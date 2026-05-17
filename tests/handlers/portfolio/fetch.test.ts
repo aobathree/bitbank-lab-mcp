@@ -10,7 +10,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { paginateMarginTrades, paginateTrades } from '../../../src/handlers/portfolio/fetch.js';
 import { BitbankPrivateClient } from '../../../src/private/client.js';
-import { mockBitbankSuccess } from '../../fixtures/private-api.js';
+import { mockBitbankError, mockBitbankSuccess } from '../../fixtures/private-api.js';
 
 beforeEach(() => {
 	process.env.BITBANK_API_KEY = 'test_key';
@@ -210,6 +210,102 @@ describe('paginateTrades — ページネーション境界', () => {
 		expect(result.trades).toHaveLength(0);
 		expect(result.truncated).toBe(false);
 	});
+
+	it('境界 dedup あり × MAX_PAGES 到達: all.length が PAGE_SIZE の倍数にならなくても truncated=true', async () => {
+		// 各ページは満杯（1000 件）だが、ページ境界で 1 件ずつ trade_id が重複する。
+		// 10 ページ全消費 → 1000 + 999*9 = 9991 件。9991 % 1000 !== 0 なので、
+		// 旧実装は誤って truncated=false を返していた（バグ）。
+		// 修正後は MAX_PAGES 到達で fall-through → truncated=true。
+		const PAGE_SIZE = 1000;
+		const MAX_PAGES = 10;
+		const pages: ReturnType<typeof makeTrade>[][] = [];
+		let nextId = 1;
+		let prevLastId: number | null = null;
+		let baseTs = 1710000000000;
+		for (let p = 0; p < MAX_PAGES; p++) {
+			const page: ReturnType<typeof makeTrade>[] = [];
+			if (prevLastId != null) {
+				page.push(makeTrade({ trade_id: prevLastId, executed_at: baseTs }));
+				for (let i = 1; i < PAGE_SIZE; i++) {
+					page.push(makeTrade({ trade_id: nextId++, executed_at: baseTs + i * 1000 }));
+				}
+			} else {
+				for (let i = 0; i < PAGE_SIZE; i++) {
+					page.push(makeTrade({ trade_id: nextId++, executed_at: baseTs + i * 1000 }));
+				}
+			}
+			prevLastId = page[page.length - 1].trade_id;
+			baseTs = page[page.length - 1].executed_at + 1000;
+			pages.push(page);
+		}
+
+		const responses = pages.map((p) => mockBitbankSuccess({ trades: p }));
+		const { fetcher, calls } = makeSequentialFetcher(responses);
+		const client = new BitbankPrivateClient({ fetcher });
+
+		const result = await paginateTrades(client);
+		expect(result.trades).toHaveLength(9991);
+		// 旧バグ条件: all.length % PAGE_SIZE === 0 で truncated を判定していた。
+		// 9991 % 1000 = 991 のためズレるという前提を明示。
+		expect(result.trades.length % PAGE_SIZE).not.toBe(0);
+		expect(result.truncated).toBe(true);
+		expect(calls.length).toBe(MAX_PAGES);
+		const ids = result.trades.map((t) => t.trade_id);
+		expect(new Set(ids).size).toBe(ids.length);
+	});
+
+	it('API エラーで break するケース: truncated=true で返す', async () => {
+		// page1 成功（満杯）→ page2 で HTTP 400 + auth エラー → tryGet が ok:false → break → fall-through。
+		// auth エラー（20001）はクライアントが即座に PrivateApiError を投げる（リトライ無し）。
+		const page1 = Array.from({ length: 1000 }, (_, i) =>
+			makeTrade({ trade_id: i + 1, executed_at: 1710000000000 + i * 1000 }),
+		);
+		const responses: Response[] = [
+			new Response(JSON.stringify(mockBitbankSuccess({ trades: page1 })), { status: 200 }),
+			new Response(JSON.stringify(mockBitbankError(20001)), { status: 400 }),
+		];
+		let callIndex = 0;
+		const fetcher = async (_url: string) => {
+			if (callIndex >= responses.length) throw new Error('unexpected fetch call');
+			return responses[callIndex++];
+		};
+		const client = new BitbankPrivateClient({ fetcher });
+
+		const result = await paginateTrades(client);
+		expect(result.trades).toHaveLength(1000);
+		expect(result.truncated).toBe(true);
+		expect(callIndex).toBe(2);
+	});
+
+	it('lastTs 欠損で break するケース: truncated=true で返す', async () => {
+		// 満杯バッチ（1000 件）だが最後のレコードの executed_at が undefined のとき、
+		// !lastTs により break → fall-through → truncated=true。
+		const head = Array.from({ length: 999 }, (_, i) =>
+			makeTrade({ trade_id: i + 1, executed_at: 1710000000000 + i * 1000 }),
+		);
+		// 型上は executed_at: number だが、API レスポンスの欠損ケースを再現するため意図的に省略する
+		const trailingTrade: Record<string, unknown> = {
+			trade_id: 1000,
+			pair: 'btc_jpy',
+			order_id: 6000,
+			side: 'buy',
+			type: 'limit',
+			amount: '0.01',
+			price: '15000000',
+			maker_taker: 'maker',
+			fee_amount_base: '0.00001',
+			fee_amount_quote: '0',
+		};
+		const fullPage = [...head, trailingTrade];
+
+		const { fetcher, calls } = makeSequentialFetcher([mockBitbankSuccess({ trades: fullPage })]);
+		const client = new BitbankPrivateClient({ fetcher });
+
+		const result = await paginateTrades(client);
+		expect(result.trades).toHaveLength(1000);
+		expect(result.truncated).toBe(true);
+		expect(calls.length).toBe(1);
+	});
 });
 
 describe('paginateMarginTrades — ページネーション境界', () => {
@@ -263,6 +359,91 @@ describe('paginateMarginTrades — ページネーション境界', () => {
 		expect(result.trades).toHaveLength(1000);
 		expect(result.truncated).toBe(true);
 		expect(calls.length).toBeLessThan(10);
+	});
+
+	it('境界 dedup あり × MAX_PAGES 到達: all.length が PAGE_SIZE の倍数にならなくても truncated=true', async () => {
+		const PAGE_SIZE = 1000;
+		const MAX_PAGES = 10;
+		const pages: ReturnType<typeof makeMarginTrade>[][] = [];
+		let nextId = 1;
+		let prevLastId: number | null = null;
+		let baseTs = 1710000000000;
+		for (let p = 0; p < MAX_PAGES; p++) {
+			const page: ReturnType<typeof makeMarginTrade>[] = [];
+			if (prevLastId != null) {
+				page.push(makeMarginTrade({ trade_id: prevLastId, executed_at: baseTs, profit_loss: '100' }));
+				for (let i = 1; i < PAGE_SIZE; i++) {
+					page.push(makeMarginTrade({ trade_id: nextId++, executed_at: baseTs + i * 1000, profit_loss: '100' }));
+				}
+			} else {
+				for (let i = 0; i < PAGE_SIZE; i++) {
+					page.push(makeMarginTrade({ trade_id: nextId++, executed_at: baseTs + i * 1000, profit_loss: '100' }));
+				}
+			}
+			prevLastId = page[page.length - 1].trade_id;
+			baseTs = page[page.length - 1].executed_at + 1000;
+			pages.push(page);
+		}
+
+		const responses = pages.map((p) => mockBitbankSuccess({ trades: p }));
+		const { fetcher, calls } = makeSequentialFetcher(responses);
+		const client = new BitbankPrivateClient({ fetcher });
+
+		const result = await paginateMarginTrades(client);
+		expect(result.trades).toHaveLength(9991);
+		expect(result.trades.length % PAGE_SIZE).not.toBe(0);
+		expect(result.truncated).toBe(true);
+		expect(calls.length).toBe(MAX_PAGES);
+	});
+
+	it('API エラーで break するケース: truncated=true で返す', async () => {
+		const page1 = Array.from({ length: 1000 }, (_, i) =>
+			makeMarginTrade({ trade_id: i + 1, executed_at: 1710000000000 + i * 1000, profit_loss: '100' }),
+		);
+		const responses: Response[] = [
+			new Response(JSON.stringify(mockBitbankSuccess({ trades: page1 })), { status: 200 }),
+			new Response(JSON.stringify(mockBitbankError(20001)), { status: 400 }),
+		];
+		let callIndex = 0;
+		const fetcher = async (_url: string) => {
+			if (callIndex >= responses.length) throw new Error('unexpected fetch call');
+			return responses[callIndex++];
+		};
+		const client = new BitbankPrivateClient({ fetcher });
+
+		const result = await paginateMarginTrades(client);
+		expect(result.trades).toHaveLength(1000);
+		expect(result.truncated).toBe(true);
+		expect(callIndex).toBe(2);
+	});
+
+	it('lastTs 欠損で break するケース: truncated=true で返す', async () => {
+		const head = Array.from({ length: 999 }, (_, i) =>
+			makeMarginTrade({ trade_id: i + 1, executed_at: 1710000000000 + i * 1000, profit_loss: '100' }),
+		);
+		const trailingTrade: Record<string, unknown> = {
+			trade_id: 1000,
+			pair: 'btc_jpy',
+			order_id: 6000,
+			side: 'sell',
+			position_side: 'long',
+			type: 'limit',
+			amount: '0.01',
+			price: '15000000',
+			maker_taker: 'maker',
+			fee_amount_base: '0',
+			fee_amount_quote: '0',
+			profit_loss: '100',
+		};
+		const fullPage = [...head, trailingTrade];
+
+		const { fetcher, calls } = makeSequentialFetcher([mockBitbankSuccess({ trades: fullPage })]);
+		const client = new BitbankPrivateClient({ fetcher });
+
+		const result = await paginateMarginTrades(client);
+		expect(result.trades).toHaveLength(1000);
+		expect(result.truncated).toBe(true);
+		expect(calls.length).toBe(1);
 	});
 });
 

@@ -111,9 +111,10 @@ export async function paginateTrades(
 		if (!lastTs) break;
 		since = String(lastTs);
 	}
-	// MAX_PAGES 到達 or エラーで抜けた場合、最終バッチが満杯なら打ち切り
-	const truncated = all.length > 0 && all.length % TRADE_PAGE_SIZE === 0;
-	return { trades: all, truncated };
+	// ループ脱出は全て未完了（MAX_PAGES 到達 / API エラー / lastTs 欠損）。
+	// 境界 dedup で all.length が TRADE_PAGE_SIZE の倍数にならないケースを誤って完了扱いしないよう、
+	// 早期 return の通常完了パス以外は truncated=true で返す。
+	return { trades: all, truncated: true };
 }
 
 /**
@@ -143,8 +144,8 @@ export async function paginateMarginTrades(
 		if (!lastTs) break;
 		since = String(lastTs);
 	}
-	const truncated = all.length > 0 && all.length % TRADE_PAGE_SIZE === 0;
-	return { trades: all, truncated };
+	// ループ脱出は全て未完了（MAX_PAGES 到達 / API エラー / lastTs 欠損）。paginateTrades と同じ扱い。
+	return { trades: all, truncated: true };
 }
 
 /**
