@@ -164,6 +164,10 @@ async function fetchByPeriod(
 /**
  * 絶対日付範囲でローソク足を取得
  * start_date - warmupBars 本前 〜 end_date までを返す
+ *
+ * 【タイムゾーン】
+ * `start` / `end` ("YYYY-MM-DD") は **JST (Asia/Tokyo)** として解釈する。
+ * bitbank の日足は JST 0:00 区切りのため固定。実行環境の TZ には依存しない。
  */
 async function fetchByAbsoluteRange(
 	pair: string,
@@ -172,8 +176,8 @@ async function fetchByAbsoluteRange(
 	end: string,
 	warmupBars: number,
 ): Promise<Candle[]> {
-	const startMs = dayjs(start).valueOf();
-	const endMs = dayjs(end).endOf('day').valueOf();
+	const startMs = dayjs.tz(start, 'Asia/Tokyo').valueOf();
+	const endMs = dayjs.tz(end, 'Asia/Tokyo').endOf('day').valueOf();
 	if (Number.isNaN(startMs) || Number.isNaN(endMs)) {
 		throw new Error(`Invalid date format: start=${start}, end=${end}`);
 	}
@@ -183,7 +187,7 @@ async function fetchByAbsoluteRange(
 
 	const barsPerDay = BARS_PER_DAY[timeframe];
 	const maxBars = MAX_FETCHABLE_BARS[timeframe];
-	const todayMs = dayjs().endOf('day').valueOf();
+	const todayMs = dayjs().tz('Asia/Tokyo').endOf('day').valueOf();
 
 	// 今日から start_date まで遡る日数（最低 0）
 	const daysFromTodayToStart = Math.max(0, Math.ceil((todayMs - startMs) / (24 * 60 * 60 * 1000)));

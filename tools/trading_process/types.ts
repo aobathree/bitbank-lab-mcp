@@ -13,7 +13,9 @@ export type Period = '1M' | '3M' | '6M' | '1Y' | '2Y' | '3Y';
 /**
  * バックテスト対象期間の指定方法
  * - period: 直近 N 本（'1M' / '3M' / ... / '3Y'）
- * - absolute: ISO 8601 (YYYY-MM-DD) の start / end で明示指定
+ * - absolute: ISO 8601 (YYYY-MM-DD) の start / end で明示指定。
+ *   start / end は **JST (Asia/Tokyo) の 0:00 / 23:59:59.999** として解釈される。
+ *   bitbank の日足が JST 0:00 区切りのため、実行環境の TZ には依存しない。
  */
 export type BacktestRange = { type: 'period'; value: Period } | { type: 'absolute'; start: string; end: string };
 

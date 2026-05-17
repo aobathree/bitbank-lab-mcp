@@ -75,6 +75,24 @@ function makeNormalized(n: number, startDate = '2024-01-01') {
 	}));
 }
 
+/**
+ * bitbank の日足を模した UTC ISO 8601 (full ISO) を返すモック生成。
+ * `get_candles` が `toIsoTime(ts)` で出力する形式と一致するため、
+ * 環境依存（実行 TZ）の影響を受けない厳密な境界テストに用いる。
+ */
+function makeJstDailyCandles(n: number, startJstDate: string) {
+	const baseMs = dayjs.tz(startJstDate, 'Asia/Tokyo').valueOf();
+	const dayMs = 24 * 60 * 60 * 1000;
+	return Array.from({ length: n }, (_, i) => ({
+		isoTime: dayjs(baseMs + i * dayMs).toISOString(),
+		open: 100,
+		high: 101,
+		low: 99,
+		close: 100,
+		volume: 1000,
+	}));
+}
+
 describe('fetchCandlesForBacktest', () => {
 	it('正常取得: 有効なローソク足を返す', async () => {
 		vi.mocked(getCandles).mockResolvedValue({
@@ -338,16 +356,18 @@ describe('fetchCandlesForBacktest', () => {
 	});
 
 	it('absolute: 最古足が start_date と完全一致 → 通過する（off-by-one 境界）', async () => {
-		// 最古足が start_date と一致するケース。earliestFetchedMs > startMs ではないので通過する。
-		const start = dayjs().subtract(30, 'day').format('YYYY-MM-DD');
-		const end = dayjs(start).add(10, 'day').format('YYYY-MM-DD');
+		// 最古足が start_date (JST) と一致するケース。earliestFetchedMs > startMs ではないので通過する。
+		// 環境 TZ 非依存のテストにするため、bitbank の本物の出力形式 (UTC ISO 8601) でモックする。
+		const start = dayjs().tz('Asia/Tokyo').subtract(30, 'day').format('YYYY-MM-DD');
+		const end = dayjs.tz(start, 'Asia/Tokyo').add(10, 'day').format('YYYY-MM-DD');
+		const expectedFirstIso = dayjs.tz(start, 'Asia/Tokyo').toISOString();
 		vi.mocked(getCandles).mockResolvedValue({
 			ok: true,
 			summary: 'ok',
-			data: { normalized: makeNormalized(20, start) },
+			data: { normalized: makeJstDailyCandles(20, start) },
 		} as never);
 		const result = await fetchCandlesForBacktest('btc_jpy', '1D', { type: 'absolute', start, end }, 0);
-		expect(result[0].time).toBe(start);
+		expect(result[0].time).toBe(expectedFirstIso);
 	});
 
 	it('absolute: 空レスポンス → 「No candle data returned」エラー', async () => {
@@ -366,14 +386,81 @@ describe('fetchCandlesForBacktest', () => {
 
 	it('absolute: 取得上限到達でも最古足が start_date と一致 → 通過する', async () => {
 		// fetchHitCap=true を発火させるため start_date を maxBars (5000) より十分過去に置く。
-		const start = dayjs().subtract(6000, 'day').format('YYYY-MM-DD');
-		const end = dayjs(start).add(20, 'day').format('YYYY-MM-DD');
+		const start = dayjs().tz('Asia/Tokyo').subtract(6000, 'day').format('YYYY-MM-DD');
+		const end = dayjs.tz(start, 'Asia/Tokyo').add(20, 'day').format('YYYY-MM-DD');
+		const expectedFirstIso = dayjs.tz(start, 'Asia/Tokyo').toISOString();
 		vi.mocked(getCandles).mockResolvedValue({
 			ok: true,
 			summary: 'ok',
-			data: { normalized: makeNormalized(5000, start) },
+			data: { normalized: makeJstDailyCandles(5000, start) },
 		} as never);
 		const result = await fetchCandlesForBacktest('btc_jpy', '1D', { type: 'absolute', start, end }, 0);
-		expect(result[0].time).toBe(start);
+		expect(result[0].time).toBe(expectedFirstIso);
+	});
+});
+
+describe('fetchCandlesForBacktest: 絶対範囲指定の TZ 非依存性', () => {
+	// 実行 TZ を変更するテストでは afterEach で必ず元に戻す。
+	afterEach(() => {
+		vi.unstubAllEnvs();
+	});
+
+	it('absolute: UTC 実行環境でも start_date は JST 0:00 として解釈される', async () => {
+		vi.stubEnv('TZ', 'UTC');
+		// JST 2024-01-10 00:00 = UTC 2024-01-09T15:00:00.000Z
+		const expectedFirstIso = '2024-01-09T15:00:00.000Z';
+		vi.mocked(getCandles).mockResolvedValue({
+			ok: true,
+			summary: 'ok',
+			data: { normalized: makeJstDailyCandles(20, '2024-01-10') },
+		} as never);
+		const result = await fetchCandlesForBacktest(
+			'btc_jpy',
+			'1D',
+			{ type: 'absolute', start: '2024-01-10', end: '2024-01-20' },
+			0,
+		);
+		// start_date を UTC として解釈してしまうと最古足 (JST 0:00 = UTC 前日 15:00)
+		// が startMs より前と判定され「Insufficient historical data」が出る。
+		// JST 0:00 として解釈されていれば最古足ぴったりから返る。
+		expect(result[0].time).toBe(expectedFirstIso);
+		// end_date も JST 23:59:59.999 として解釈される。JST 2024-01-20 = UTC 2024-01-19T15:00:00Z までが含まれる。
+		const lastMs = dayjs(result[result.length - 1].time).valueOf();
+		expect(lastMs).toBeLessThanOrEqual(dayjs.tz('2024-01-20', 'Asia/Tokyo').endOf('day').valueOf());
+	});
+
+	it('absolute: JST 実行環境でも JST 0:00 として解釈される (リグレッション)', async () => {
+		vi.stubEnv('TZ', 'Asia/Tokyo');
+		const expectedFirstIso = '2024-01-09T15:00:00.000Z';
+		vi.mocked(getCandles).mockResolvedValue({
+			ok: true,
+			summary: 'ok',
+			data: { normalized: makeJstDailyCandles(20, '2024-01-10') },
+		} as never);
+		const result = await fetchCandlesForBacktest(
+			'btc_jpy',
+			'1D',
+			{ type: 'absolute', start: '2024-01-10', end: '2024-01-20' },
+			0,
+		);
+		expect(result[0].time).toBe(expectedFirstIso);
+	});
+
+	it('absolute: UTC 実行環境でも warmup 分が含まれる', async () => {
+		vi.stubEnv('TZ', 'UTC');
+		// 2024-01-01 から 50 本（実態は JST 0:00 起点の UTC ISO）
+		vi.mocked(getCandles).mockResolvedValue({
+			ok: true,
+			summary: 'ok',
+			data: { normalized: makeJstDailyCandles(50, '2024-01-01') },
+		} as never);
+		const result = await fetchCandlesForBacktest(
+			'btc_jpy',
+			'1D',
+			{ type: 'absolute', start: '2024-01-10', end: '2024-01-20' },
+			5,
+		);
+		// start_date より warmup=5 本前 = JST 2024-01-05 = UTC 2024-01-04T15:00:00.000Z
+		expect(result[0].time).toBe('2024-01-04T15:00:00.000Z');
 	});
 });
