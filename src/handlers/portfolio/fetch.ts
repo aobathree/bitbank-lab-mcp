@@ -148,11 +148,15 @@ export async function paginateMarginTrades(
 		// truncated 判定はフィルタ前の batch.length を使う。フィルタ後の長さで判定すると
 		// 現物比率が高いとき早期終了し、次ページの margin 約定を取り逃がす。
 		if (batch.length < TRADE_PAGE_SIZE) return { trades: all, truncated: false };
-		// 信用が含まれない満杯ページが連続するケースの無限ループ防止（marginOnly ベースで判定）。
-		if (newRecords.length === 0) return { trades: all, truncated: true };
 		const lastTs = batch[batch.length - 1]?.executed_at;
 		if (!lastTs) break;
-		since = String(lastTs);
+		// 同一タイムスタンプ満杯ループの保険はカーソルベース（marginOnly 件数ではなく
+		// since の前進有無）で判定する。marginOnly 件数で判定すると、古い順 (asc) 取得で
+		// 「初期は現物のみ → 途中から信用利用開始」の口座で満杯現物ページに当たった瞬間に
+		// 後続の信用約定を取り逃がしてしまう。
+		const nextSince = String(lastTs);
+		if (nextSince === since) return { trades: all, truncated: true };
+		since = nextSince;
 	}
 	// ループ脱出は全て未完了（MAX_PAGES 到達 / API エラー / lastTs 欠損）。paginateTrades と同じ扱い。
 	return { trades: all, truncated: true };
