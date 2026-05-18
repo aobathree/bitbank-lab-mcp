@@ -27,7 +27,7 @@
 |---|---|---|---|---|
 | Public Base URL | `https://public.bitbank.cc` | `BITBANK_API_BASE` 定数 | `lib/http.ts:2` | ✅ |
 | Private Base URL | `https://api.bitbank.cc/v1` | `BitbankPrivateClient.BASE_URL = 'https://api.bitbank.cc'`（パスは `/v1/...` を都度付与） | `src/private/client.ts:56` | ✅ |
-| Public レスポンス封筒 | `{ success: 0|1, data: ... }` | `success !== 1` を upstream エラーとして扱う | `tools/get_ticker.ts:89`, `tools/get_tickers_jpy.ts:199` | ✅ |
+| Public レスポンス封筒 | `{ success: 0\|1, data: ... }` | `success !== 1` を upstream エラーとして扱う | `tools/get_ticker.ts:89`, `tools/get_tickers_jpy.ts:199` | ✅ |
 | Private レスポンス封筒 | 同上 | `BitbankPrivateClient.request` 内で `json.success !== 1` を分類 | `src/private/client.ts:177` | ✅ |
 | Result パターン | ➖ | 全ツールで `ok()` / `fail()` を返却 | `lib/result.ts` | ✅ |
 
@@ -272,7 +272,7 @@
 | `average_price` | string | ✅ |
 | `ordered_at` | number(ms) | ✅ |
 | `expire_at` | number \| null | ✅ |
-| `triggered_at` | number \| undef | ✅（`number | string` を許容） |
+| `triggered_at` | number \| undef | ✅（`number \| string` を許容） |
 | `trigger_price` | string \| undef | ✅ |
 | `canceled_at` | number(ms) | ✅ |
 | `status` | enum | 🟡 `z.string()` で受けている（後述） |
