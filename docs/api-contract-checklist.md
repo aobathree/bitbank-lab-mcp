@@ -317,7 +317,7 @@
 - bitbank エラーコード補足メッセージ: 50058〜50078（信用）/ 60001〜60016（数量制限）/ 70004〜70020（取引制限）。
 
 **注記**:
-- 公式 spec の `POST /user/spot/order` は注文 `type` として `limit` / `market` / `stop` / `stop_limit` に加え **`take_profit` / `stop_loss` / `losscut`** も列挙している。
+- 公式 spec の `POST /v1/user/spot/order` は注文 `type` として `limit` / `market` / `stop` / `stop_limit` に加え **`take_profit` / `stop_loss` / `losscut`** も列挙している。
   - `take_profit` / `stop_loss`: 公式 docs に動作仕様（発動方向、`amount` 省略時の決済範囲、現物 vs 信用の適用可否）が記載されていないため、本実装では **意図的に未対応**。`SpotOrderTypeEnum` 側で拒否され、`preview_order` / `create_order` ともに Zod バリデーションエラー（`validation_error`）となる。詳細な未対応理由は `docs/private-api.md` の「対応注文タイプ」節を参照。
   - `losscut`: システム発動の強制決済タイプであり、ユーザー入力対象ではない。`SpotOrderTypeEnum` でも当然非対応。
 - OrderResponseSchema 側の `type` は `z.string()` で受けているため、これらタイプの注文を**取得**することはできる（`get_order` / `get_my_orders`）。新規発注のみ非対応。

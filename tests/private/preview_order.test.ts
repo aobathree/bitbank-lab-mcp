@@ -186,6 +186,10 @@ describe('preview_order', () => {
 	// take_profit / stop_loss / losscut は公式 spec に列挙されているが本実装では意図的に未対応。
 	// SpotOrderTypeEnum で 4 種に絞っており、Zod 入力スキーマで早期に拒否されることを保証する。
 	// 詳細は docs/private-api.md「対応注文タイプ」節 / docs/api-contract-checklist.md §3.4 を参照。
+	//
+	// 失敗理由が「type フィールド由来」であることを issues.path で確認する。
+	// success===false のみだと、他フィールドの欠落（confirmation_token 未指定等）でも
+	// テストが通ってしまい、type 列挙の閉鎖性を検証できなくなるため。
 	describe('未対応の注文タイプ（take_profit / stop_loss / losscut）', () => {
 		it('take_profit は PreviewOrderInputSchema で拒否される', async () => {
 			const { PreviewOrderInputSchema } = await import('../../src/private/schemas.js');
@@ -197,6 +201,9 @@ describe('preview_order', () => {
 				trigger_price: '16000000',
 			});
 			expect(result.success).toBe(false);
+			if (!result.success) {
+				expect(result.error.issues.some((i) => i.path.join('.') === 'type')).toBe(true);
+			}
 		});
 
 		it('stop_loss は PreviewOrderInputSchema で拒否される', async () => {
@@ -209,6 +216,9 @@ describe('preview_order', () => {
 				trigger_price: '13000000',
 			});
 			expect(result.success).toBe(false);
+			if (!result.success) {
+				expect(result.error.issues.some((i) => i.path.join('.') === 'type')).toBe(true);
+			}
 		});
 
 		it('losscut は PreviewOrderInputSchema で拒否される', async () => {
@@ -220,6 +230,9 @@ describe('preview_order', () => {
 				type: 'losscut',
 			});
 			expect(result.success).toBe(false);
+			if (!result.success) {
+				expect(result.error.issues.some((i) => i.path.join('.') === 'type')).toBe(true);
+			}
 		});
 	});
 

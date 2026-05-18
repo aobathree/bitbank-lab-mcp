@@ -367,6 +367,10 @@ describe('create_order — 非 PrivateApiError の generic catch', () => {
 // take_profit / stop_loss / losscut は公式 spec に列挙されているが本実装では意図的に未対応。
 // CreateOrderInputSchema が Zod 段階で拒否し、注文 API には到達しないことを保証する。
 // 詳細は docs/private-api.md「対応注文タイプ」節 / docs/api-contract-checklist.md §3.4 を参照。
+//
+// 失敗理由が「type フィールド由来」であることを issues.path で確認する。
+// success===false のみだと、他フィールドの欠落（confirmation_token 未指定等）でも
+// テストが通ってしまい、type 列挙の閉鎖性を検証できなくなるため。
 describe('create_order — 未対応の注文タイプ（take_profit / stop_loss / losscut）', () => {
 	it('take_profit は CreateOrderInputSchema で拒否される', async () => {
 		const { CreateOrderInputSchema } = await import('../../src/private/schemas.js');
@@ -380,6 +384,9 @@ describe('create_order — 未対応の注文タイプ（take_profit / stop_loss
 			token_expires_at: Date.now() + 60_000,
 		});
 		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error.issues.some((i) => i.path.join('.') === 'type')).toBe(true);
+		}
 	});
 
 	it('stop_loss は CreateOrderInputSchema で拒否される', async () => {
@@ -394,6 +401,9 @@ describe('create_order — 未対応の注文タイプ（take_profit / stop_loss
 			token_expires_at: Date.now() + 60_000,
 		});
 		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error.issues.some((i) => i.path.join('.') === 'type')).toBe(true);
+		}
 	});
 
 	it('losscut は CreateOrderInputSchema で拒否される（システム発動のみのタイプ）', async () => {
@@ -407,6 +417,9 @@ describe('create_order — 未対応の注文タイプ（take_profit / stop_loss
 			token_expires_at: Date.now() + 60_000,
 		});
 		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error.issues.some((i) => i.path.join('.') === 'type')).toBe(true);
+		}
 	});
 });
 
