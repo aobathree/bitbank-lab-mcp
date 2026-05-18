@@ -6,8 +6,7 @@
   - Public: <https://github.com/bitbankinc/bitbank-api-docs/blob/master/public-api_JP.md>
   - Private REST: <https://github.com/bitbankinc/bitbank-api-docs/blob/master/rest-api.md>
   - エラーコード: <https://github.com/bitbankinc/bitbank-api-docs/blob/master/errors.md>
-- **作成日**: 2026-05-18
-- **対象ブランチ**: `claude/bitbank-api-contract-checklist-BADaE`
+- **確認時点**: 2026-05-18（`main` = commit `c3d408e` 時点のスナップショット）
 - **目的**: 実装変更前のギャップ可視化。本ドキュメントは現状把握用であり、修正は行わない。
 
 ## 凡例
@@ -27,7 +26,7 @@
 |---|---|---|---|---|
 | Public Base URL | `https://public.bitbank.cc` | `BITBANK_API_BASE` 定数 | `lib/http.ts:2` | ✅ |
 | Private Base URL | `https://api.bitbank.cc/v1` | `BitbankPrivateClient.BASE_URL = 'https://api.bitbank.cc'`（パスは `/v1/...` を都度付与） | `src/private/client.ts:56` | ✅ |
-| Public レスポンス封筒 | `{ success: 0\|1, data: ... }` | `success !== 1` を upstream エラーとして扱う | `tools/get_ticker.ts:89`, `tools/get_tickers_jpy.ts:199` | ✅ |
+| Public レスポンス封筒 | `{ success: 0\|1, data: ... }` | `get_ticker` / `get_tickers_jpy` のみ `success !== 1` を upstream として分類。`get_candles` / `get_transactions` / `get_orderbook` は `data?.candlestick?.[0]?.ohlcv ?? []` 等の optional chaining + 空配列フォールバックで間接的に弾いており、`success:0` を明示分類していない | `tools/get_ticker.ts:89`, `tools/get_tickers_jpy.ts:199` | 🟡 |
 | Private レスポンス封筒 | 同上 | `BitbankPrivateClient.request` 内で `json.success !== 1` を分類 | `src/private/client.ts:177` | ✅ |
 | Result パターン | ➖ | 全ツールで `ok()` / `fail()` を返却 | `lib/result.ts` | ✅ |
 
@@ -152,7 +151,7 @@
 | 入力スキーマ | `GetCandlesInputSchema` — `src/schema/market-data.ts:95` |
 | 出力スキーマ | `GetCandlesOutputSchema` — `src/schema/market-data.ts:93` |
 | テスト | `tests/get_candles.test.ts`（16 describe/it） |
-| 状態 | ✅ |
+| 状態 | 🟡 |
 
 **candle-type 一覧:** 1min / 5min / 15min / 30min / 1hour / 4hour / 8hour / 12hour / 1day / 1week / 1month
 - `YEARLY_TYPES` = 4hour 以上は YYYY 形式
@@ -172,7 +171,10 @@
 - バッチ間ディレイ 500ms、3 並列、レート制限を意識した実装
 - `keyPoints` (today, 7日前, 30日前, 90日前) / `volumeStats` の派生指標
 
-**注記**: 公式 spec では `ohlcv` 配列の volume が「base 通貨建ての合算」であり、買い/売り内訳は無い。実装も同前提でコメント済み (`tools/get_candles.ts:275-276`)。
+**注記**:
+- 公式 spec の `candlestick[].timestamp`（公開日時、各 ohlcv の ts とは別）は破棄しており、契約照合上は不完全。
+- 公式 spec では `ohlcv` 配列の volume が「base 通貨建ての合算」であり、買い/売り内訳は無い。実装も同前提でコメント済み (`tools/get_candles.ts:275-276`)。
+- multi-year 取得（4hour 以上の type）は `currentYear = dayjs().year()` を起点に `currentYear - i` を生成しており（`tools/get_candles.ts:154-155`）、入力の `date` (YYYY) を起点にしていない。`date=2020` で `limit=2000` の `1day` を要求しても 2025 / 2024 を取りに行く可能性があり、ユーザー指定年と乖離する。テスト未確認。
 
 ### 2.7 GET `/{pair}/circuit_break_info`
 
@@ -294,7 +296,7 @@
 | 実装ファイル | `tools/private/create_order.ts`, `tools/private/preview_order.ts` |
 | スキーマ | `CreateOrderInputSchema` — `src/private/schemas.ts:689` / `PreviewOrderInputSchema` — `src/private/schemas.ts:641` |
 | テスト | `tests/private/create_order.test.ts`（718 行）/ `preview_order.test.ts`（553 行） |
-| 状態 | ✅ |
+| 状態 | 🟡 |
 
 **リクエストパラメータ対応:**
 
@@ -314,7 +316,9 @@
 - 注文監査ログ（チェーンハッシュ付き）。
 - bitbank エラーコード補足メッセージ: 50058〜50078（信用）/ 60001〜60016（数量制限）/ 70004〜70009（取引制限）。
 
-**注記**: スキーマには無い `take_profit` / `stop_loss` / `losscut` も公式 OrderResponse には登場するが、こちらは入力 side としては不要（システム側で発生）。OrderResponseSchema 側 `type` を `z.string()` で受けているため取得は問題ない。
+**注記**:
+- 公式 spec の `POST /user/spot/order` は注文 `type` として `limit` / `market` / `stop` / `stop_limit` に加え **`take_profit` / `stop_loss` / `losscut`** も列挙している（`losscut` はシステム発生だが `take_profit` / `stop_loss` はユーザー入力可）。実装の `SpotOrderTypeEnum` は前 4 種のみで、`take_profit` / `stop_loss` を意図せず受け付けない。`losscut` は明らかにシステム側のみだが、`take_profit` / `stop_loss` は入力サポート可否を要再検討。
+- OrderResponseSchema 側の `type` は `z.string()` で受けているため、これらタイプの注文を**取得**することはできる（`get_order` / `get_my_orders`）。
 
 ### 3.5 POST `/v1/user/spot/cancel_order`
 
@@ -411,7 +415,7 @@
 | `since` | ✅ ISO8601 入力 |
 | `end` | ✅ |
 | `order_id`（特定注文の約定取得） | ❌ |
-| `type` | 🟡 `get_margin_trade_history` で `type=margin` を内部送信 |
+| ~`type`~（公式パラメータには無い） | ➖ `get_margin_trade_history` が `type=margin` を**非公式パラメータ**として送信。公式 docs には記載が無いため、API に無視される可能性に備えてレスポンス側の `position_side != null` でフィルタする実装 (`tools/private/get_margin_trade_history.ts:161-162`) |
 
 **追加機能:**
 - 自動ページネーション（最大 10 ページ）。order に応じて asc=since 前進 / desc=end 後退 でカーソル管理し、同一 ms 境界レコードを `trade_id` で重複排除（`tools/private/get_my_trade_history.ts:52-102`）。
@@ -607,8 +611,11 @@
 
 - [ ] **`transaction_id` を `get_transactions` の normalized に含める** — 重複検出 / 突合が不可能な現状を解消。
 - [ ] **`get_transactions` テスト拡充** — 81 行・6 ケースは薄い。日付フォーマット境界、空配列、API 異常系、`maxAmount` / `maxPrice` フィルタ未検証。
+- [ ] **Public 全取得系で `success:0` fixture テスト追加** — `get_candles` / `get_transactions` / `get_orderbook` は `data` 構造で間接的に弾いているのみ。fixture でレスポンス封筒 `success:0` を返した時の挙動を検証する必要あり。
+- [ ] **`get_candles` multi-year の起点を `date` パラメータ基準に修正、または明示的に「current year 起点」と仕様化** — 現状 `currentYear = dayjs().year()` 固定で、ユーザー指定 `date=2020` で過去年データを期待しても 2025/2024 を取得してしまう可能性。テストで実挙動を確定させる。
 - [ ] **`70020`（circuit break 中の market 拒否）のエラーマッピング** — `create_order` の `codeMessages` に追加。
 - [ ] **`OrderStatusEnum` に `REJECTED` / `TRIGGERED` を追加し `OrderResponseSchema.status` を enum 化** — 現状 `z.string()` で受けているため誤値検出が弱い。
+- [ ] **`SpotOrderTypeEnum` に `take_profit` / `stop_loss` 入力サポート可否を再検討** — 公式 spec の `POST /user/spot/order` に列挙されているが実装は 4 種のみ。bitbank が現物で本当に受け付けるか動作確認の上、対応 or 「意図的に未対応」として明文化。
 
 ### Medium（機能拡張・将来の堅牢性）
 
