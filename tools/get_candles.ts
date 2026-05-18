@@ -58,6 +58,16 @@ interface FetchChunkResult {
 	error?: unknown;
 }
 
+// チャンク fetcher が success:0 を検出したときに記録するエラー。
+// 全チャンク失敗時に outer catch の `failFromError`（=network 分類）に流すのではなく、
+// upstream として明示分類するため instanceof で判定する。
+class UpstreamApiError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = 'UpstreamApiError';
+	}
+}
+
 // 単一年のデータを取得する内部関数
 async function fetchSingleYear(pair: string, type: string, year: number): Promise<FetchChunkResult> {
 	const url = `${BITBANK_API_BASE}/${pair}/candlestick/${type}/${year}`;
@@ -68,10 +78,12 @@ async function fetchSingleYear(pair: string, type: string, year: number): Promis
 			data?: { candlestick?: Array<{ ohlcv?: unknown[] }>; code?: number };
 		};
 		// success:0 を空配列として握りつぶさず、チャンク失敗として扱う。
+		// UpstreamApiError でラップすることで、全チャンク失敗時に outer catch ではなく
+		// 明示的な upstream 分類で fail を返せる。
 		if (jsonObj?.success !== 1) {
 			const code = jsonObj?.data?.code;
 			const msg = code != null ? `bitbank API error (code: ${code})` : 'bitbank API error';
-			return { rows: [], rateLimit, error: new Error(msg) };
+			return { rows: [], rateLimit, error: new UpstreamApiError(msg) };
 		}
 		const cs = jsonObj?.data?.candlestick?.[0];
 		const ohlcvs = cs?.ohlcv ?? [];
@@ -96,10 +108,12 @@ async function fetchSingleDay(
 			data?: { candlestick?: Array<{ ohlcv?: unknown[] }>; code?: number };
 		};
 		// success:0 を空配列として握りつぶさず、チャンク失敗として扱う。
+		// UpstreamApiError でラップすることで、全チャンク失敗時に outer catch ではなく
+		// 明示的な upstream 分類で fail を返せる。
 		if (jsonObj?.success !== 1) {
 			const code = jsonObj?.data?.code;
 			const msg = code != null ? `bitbank API error (code: ${code})` : 'bitbank API error';
-			return { rows: [], rateLimit, error: new Error(msg) };
+			return { rows: [], rateLimit, error: new UpstreamApiError(msg) };
 		}
 		const cs = jsonObj?.data?.candlestick?.[0];
 		const ohlcvs = cs?.ohlcv ?? [];
@@ -188,9 +202,14 @@ export default async function getCandles(
 				allOhlcvs.push(...results[i].rows);
 			}
 
-			// 全チャンクがエラーの場合はネットワークエラーとして伝播
+			// 全チャンクがエラーの場合は分類して伝播
+			// - UpstreamApiError（success:0 由来）→ upstream として明示分類
+			// - それ以外（ネットワーク等）→ throw → outer catch で network 分類
 			if (allOhlcvs.length === 0) {
 				const firstError = results.find((r) => r.error);
+				if (firstError?.error instanceof UpstreamApiError) {
+					return fail(firstError.error.message, 'upstream');
+				}
 				if (firstError?.error) throw firstError.error;
 			}
 
@@ -247,9 +266,14 @@ export default async function getCandles(
 			const failedDays = allDayResults.filter((r) => r.error);
 			const totalDays = allDayResults.length;
 
-			// 全チャンクがエラーの場合はネットワークエラーとして伝播
+			// 全チャンクがエラーの場合は分類して伝播
+			// - UpstreamApiError（success:0 由来）→ upstream として明示分類
+			// - それ以外（ネットワーク等）→ throw → outer catch で network 分類
 			if (allOhlcvs.length === 0) {
 				const firstError = allDayResults.find((r) => r.error);
+				if (firstError?.error instanceof UpstreamApiError) {
+					return fail(firstError.error.message, 'upstream');
+				}
 				if (firstError?.error) throw firstError.error;
 			}
 

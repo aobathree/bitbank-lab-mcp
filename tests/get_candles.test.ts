@@ -297,7 +297,7 @@ describe('getCandles', () => {
 		expect(res.meta?.errorType).toBe('upstream');
 	});
 
-	it('API異常系: 複数年取得で全チャンク success:0 でも user 分類にならない（チャンク失敗扱い）', async () => {
+	it('API異常系: 複数年取得で全チャンク success:0 のとき upstream として明示分類する', async () => {
 		// 1day + limit=500 → 複数年取得が走るパス
 		const fetchMock = vi.fn().mockResolvedValue({
 			ok: true,
@@ -309,11 +309,11 @@ describe('getCandles', () => {
 
 		const res = await getCandles('btc_jpy', '1day', undefined, 500);
 		assertFail(res);
-		// 「データなし」(user) で握りつぶされていないことが本質。
-		expect(res.meta?.errorType).not.toBe('user');
+		expect(res.meta?.errorType).toBe('upstream');
+		expect(res.summary).toContain('code: 10000');
 	});
 
-	it('API異常系: 複数日取得で全チャンク success:0 でも user 分類にならない（チャンク失敗扱い）', async () => {
+	it('API異常系: 複数日取得で全チャンク success:0 のとき upstream として明示分類する', async () => {
 		// 1hour + limit=100 → 複数日バッチ取得が走るパス
 		const fetchMock = vi.fn().mockResolvedValue({
 			ok: true,
@@ -325,7 +325,8 @@ describe('getCandles', () => {
 
 		const res = await getCandles('btc_jpy', '1hour', '20240115', 100);
 		assertFail(res);
-		expect(res.meta?.errorType).not.toBe('user');
+		expect(res.meta?.errorType).toBe('upstream');
+		expect(res.summary).toContain('code: 10000');
 	});
 
 	it('tz が空文字列の場合 isoTimeLocal を含めないべき', async () => {
