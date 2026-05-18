@@ -44,6 +44,18 @@ export const depthBtcJpy = {
 	},
 } as const;
 
+/** GET /{pair}/depth — success:0 エラーレスポンス */
+export const depthError = {
+	success: 0,
+	data: { code: 20003 },
+} as const;
+
+/** GET /{pair}/candlestick — success:0 エラーレスポンス */
+export const candlesError = {
+	success: 0,
+	data: { code: 10000 },
+} as const;
+
 /** GET /{pair}/transactions — 正常レスポンス（最小） */
 export const transactionsBtcJpy = {
 	success: 1,

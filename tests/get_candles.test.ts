@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import getCandles from '../tools/get_candles.js';
 import { assertFail, assertOk } from './_assertResult.js';
+import { candlesError } from './fixtures/bitbank-api.js';
 
 describe('getCandles', () => {
 	const originalFetch = globalThis.fetch;
 
 	afterEach(() => {
 		globalThis.fetch = originalFetch;
+		vi.restoreAllMocks();
 	});
 
 	it('不正な日付形式は user エラーを返す', async () => {
@@ -261,6 +263,69 @@ describe('getCandles', () => {
 		const lows = res.data.normalized.map((c: { low: number }) => c.low);
 		expect(Math.max(...highs)).toBe(200);
 		expect(Math.min(...lows)).toBe(70);
+	});
+
+	// ── API 異常系（success:0） ──
+
+	it('API異常系: success:0 を「データなし」(user) ではなく upstream として明示分類する', async () => {
+		// 単一リクエスト経路: 1day + limit=10 + date=2024 は yearsNeeded=1 で単発取得
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			statusText: 'OK',
+			json: async () => candlesError,
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const res = await getCandles('btc_jpy', '1day', '2024', 10);
+		assertFail(res);
+		expect(res.meta?.errorType).toBe('upstream');
+		expect(res.summary).toContain('code: 10000');
+	});
+
+	it('API異常系: success:0 で data.code が無くても upstream として返す', async () => {
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			statusText: 'OK',
+			json: async () => ({ success: 0, data: {} }),
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const res = await getCandles('btc_jpy', '1day', '2024', 10);
+		assertFail(res);
+		expect(res.meta?.errorType).toBe('upstream');
+	});
+
+	it('API異常系: 複数年取得で全チャンク success:0 でも user 分類にならない（チャンク失敗扱い）', async () => {
+		// 1day + limit=500 → 複数年取得が走るパス
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			statusText: 'OK',
+			json: async () => candlesError,
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const res = await getCandles('btc_jpy', '1day', undefined, 500);
+		assertFail(res);
+		// 「データなし」(user) で握りつぶされていないことが本質。
+		expect(res.meta?.errorType).not.toBe('user');
+	});
+
+	it('API異常系: 複数日取得で全チャンク success:0 でも user 分類にならない（チャンク失敗扱い）', async () => {
+		// 1hour + limit=100 → 複数日バッチ取得が走るパス
+		const fetchMock = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			statusText: 'OK',
+			json: async () => candlesError,
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const res = await getCandles('btc_jpy', '1hour', '20240115', 100);
+		assertFail(res);
+		expect(res.meta?.errorType).not.toBe('user');
 	});
 
 	it('tz が空文字列の場合 isoTimeLocal を含めないべき', async () => {

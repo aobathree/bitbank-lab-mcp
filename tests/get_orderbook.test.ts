@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import getOrderbook, { toolDef } from '../tools/get_orderbook.js';
 import { assertFail, assertOk } from './_assertResult.js';
+import { depthError } from './fixtures/bitbank-api.js';
 
 /** assertOk 後の res.data を deep-access 可能にするヘルパー */
 // biome-ignore lint/suspicious/noExplicitAny: test helper — deep property access on Result.data
@@ -415,6 +416,21 @@ describe('get_orderbook', () => {
 			json: async () => ({ success: 1, data: { timestamp: 1_700_000_000_000 } }),
 		}) as unknown as typeof fetch;
 
+		const res = await getOrderbook({ pair: 'btc_jpy', mode: 'summary' });
+		assertFail(res);
+		expect(res.meta?.errorType).toBe('upstream');
+	});
+
+	it('API異常系: success:0 を bids/asks 欠損 ではなく upstream として明示分類する', async () => {
+		mockFetch(depthError);
+		const res = await getOrderbook({ pair: 'btc_jpy', mode: 'summary' });
+		assertFail(res);
+		expect(res.meta?.errorType).toBe('upstream');
+		expect(res.summary).toContain('code: 20003');
+	});
+
+	it('API異常系: success:0 で data.code が無くても upstream として返す', async () => {
+		mockFetch({ success: 0, data: {} });
 		const res = await getOrderbook({ pair: 'btc_jpy', mode: 'summary' });
 		assertFail(res);
 		expect(res.meta?.errorType).toBe('upstream');

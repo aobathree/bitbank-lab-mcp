@@ -63,7 +63,16 @@ async function fetchSingleYear(pair: string, type: string, year: number): Promis
 	const url = `${BITBANK_API_BASE}/${pair}/candlestick/${type}/${year}`;
 	try {
 		const { data: json, rateLimit } = await fetchJsonWithRateLimit(url, { timeoutMs: 8000, retries: DEFAULT_RETRIES });
-		const jsonObj = json as { data?: { candlestick?: Array<{ ohlcv?: unknown[] }> } };
+		const jsonObj = json as {
+			success?: number;
+			data?: { candlestick?: Array<{ ohlcv?: unknown[] }>; code?: number };
+		};
+		// success:0 を空配列として握りつぶさず、チャンク失敗として扱う。
+		if (jsonObj?.success !== 1) {
+			const code = jsonObj?.data?.code;
+			const msg = code != null ? `bitbank API error (code: ${code})` : 'bitbank API error';
+			return { rows: [], rateLimit, error: new Error(msg) };
+		}
 		const cs = jsonObj?.data?.candlestick?.[0];
 		const ohlcvs = cs?.ohlcv ?? [];
 		return { rows: ohlcvs as OhlcvRow[], rateLimit };
@@ -82,7 +91,16 @@ async function fetchSingleDay(
 	const url = `${BITBANK_API_BASE}/${pair}/candlestick/${type}/${dateStr}`;
 	try {
 		const { data: json, rateLimit } = await fetchJsonWithRateLimit(url, { timeoutMs: 8000, retries: DEFAULT_RETRIES });
-		const jsonObj = json as { data?: { candlestick?: Array<{ ohlcv?: unknown[] }> } };
+		const jsonObj = json as {
+			success?: number;
+			data?: { candlestick?: Array<{ ohlcv?: unknown[] }>; code?: number };
+		};
+		// success:0 を空配列として握りつぶさず、チャンク失敗として扱う。
+		if (jsonObj?.success !== 1) {
+			const code = jsonObj?.data?.code;
+			const msg = code != null ? `bitbank API error (code: ${code})` : 'bitbank API error';
+			return { rows: [], rateLimit, error: new Error(msg) };
+		}
 		const cs = jsonObj?.data?.candlestick?.[0];
 		const ohlcvs = cs?.ohlcv ?? [];
 		return { rows: ohlcvs as OhlcvRow[], rateLimit };
@@ -261,7 +279,21 @@ export default async function getCandles(
 			const fetchResult = await fetchJsonWithRateLimit(url, { timeoutMs: 5000, retries: DEFAULT_RETRIES });
 			json = fetchResult.data;
 			lastRateLimit = fetchResult.rateLimit;
-			const jsonObj = json as { data?: { candlestick?: Array<{ ohlcv?: unknown[] }> } };
+			const jsonObj = json as {
+				success?: number;
+				data?: { candlestick?: Array<{ ohlcv?: unknown[] }>; code?: number };
+			};
+			// 上流レスポンスの success フラグを明示的に検証する。
+			// 公式 API は { success: 0|1, data: ... } 形式で、エラー時は success:0 を返す。
+			// optional chaining のフォールバックに任せると空配列として握りつぶされ「データなし」(user) として返してしまう。
+			if (jsonObj?.success !== 1) {
+				const code = jsonObj?.data?.code;
+				const codeStr = code != null ? `（code: ${code}）` : '';
+				return parseAsResult<GetCandlesData, GetCandlesMeta>(
+					GetCandlesOutputSchema,
+					fail(`bitbank API がエラーを返却しました${codeStr}`, 'upstream'),
+				);
+			}
 			const cs = jsonObj?.data?.candlestick?.[0];
 			ohlcvs = cs?.ohlcv ?? [];
 		}

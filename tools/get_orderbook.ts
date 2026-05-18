@@ -472,7 +472,15 @@ export default async function getOrderbook(params: GetOrderbookParams | string =
 	const url = `${BITBANK_API_BASE}/${chk.pair}/depth`;
 	try {
 		const { data: json, rateLimit } = await fetchJsonWithRateLimit(url, { timeoutMs, retries: DEFAULT_RETRIES });
-		const jsonObj = json as { data?: Record<string, unknown> };
+		const jsonObj = json as { success?: number; data?: Record<string, unknown> };
+		// 上流レスポンスの success フラグを明示的に検証する。
+		// 公式 API は { success: 0|1, data: ... } 形式で、エラー時は success:0 を返す。
+		// optional chaining のフォールバックに任せると bids/asks 欠損として握りつぶされてしまう。
+		if (jsonObj?.success !== 1) {
+			const code = (jsonObj?.data as { code?: number } | undefined)?.code;
+			const codeStr = code != null ? `（code: ${code}）` : '';
+			return fail(`bitbank API がエラーを返却しました${codeStr}`, 'upstream');
+		}
 		const d = jsonObj?.data ?? {};
 		if (!Array.isArray(d.asks) || !Array.isArray(d.bids)) {
 			return fail('上流レスポンスに bids/asks が含まれていません', 'upstream');
