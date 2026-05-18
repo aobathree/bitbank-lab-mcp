@@ -91,29 +91,30 @@
 |---|---|
 | ツール | `get_orderbook`（mode = summary/pressure/statistics/raw） |
 | 実装ファイル | `tools/get_orderbook.ts` |
-| 入力スキーマ | `GetOrderbookInputSchema` — `src/schema/market-data.ts:48` |
-| 出力スキーマ | `GetOrderbookOutputSchema`, `GetDepthOutputSchema` — `src/schema/market-data.ts:46,165` |
-| テスト | `tests/get_orderbook.test.ts`（34 describe/it） |
-| 状態 | 🟡 |
+| 入力スキーマ | `GetOrderbookInputSchema` — `src/schema/market-data.ts` |
+| 出力スキーマ | `GetOrderbookOutputSchema` — `src/schema/market-data.ts`。`data` は `mode` をディスクリミネータとする `z.discriminatedUnion('mode', [Summary, Pressure, Statistics, Raw])`。スキーマと実装の整合は `tests/get_orderbook.test.ts` の `OutputSchema 整合性` describe で 4 mode 全てを `parse()` 検証する。`GetDepthOutputSchema`（`lib/get-depth.ts` 専用）は別系統のため触っていない |
+| テスト | `tests/get_orderbook.test.ts`（38 describe/it） |
+| 状態 | 🟢 |
 
-**レスポンスフィールド対応:**
+**レスポンスフィールド対応（mode 別 shape は schema が自動的に分岐）:**
 
 | 公式 | 型 | 実装 | 注記 |
 |---|---|---|---|
-| `asks` | `[string, string][]` | ✅ | mode=raw でそのまま保持 / 他 mode は `[number, number]` 化 |
+| `asks` | `[string, string][]` | ✅ | raw mode はタプルのまま `OrderbookRawDataSchema.asks`、他 mode は `[number, number]` 化して `normalized.asks` / 集計値に流す |
 | `bids` | `[string, string][]` | ✅ | 同上 |
-| `asks_over` | string | 🟡 | raw mode の `data.asks_over` に保持。`GetDepthDataSchemaOut` で optional |
-| `bids_under` | string | 🟡 | raw mode のみ。statistics / pressure mode には流れていない |
-| `asks_under` | string | 🟡 | raw mode のみ |
-| `bids_over` | string | 🟡 | raw mode のみ |
-| `ask_market` | string | 🟡 | raw mode のみ。market order 待ち数量 |
-| `bid_market` | string | 🟡 | raw mode のみ |
-| `timestamp` | number | ✅ | `timestamp` (number) として保持 |
-| `sequenceId` | number | 🟡 | raw mode のみ。`sequence_id` snake_case も拾うフォールバックがある (`tools/get_orderbook.ts:432`) |
+| `asks_over` | string | ✅ | raw mode の `data.asks_over` に保持（`OrderbookRawDataSchema`、`z.union([z.string(), z.number()]).optional()`）。pressure / statistics には流していない |
+| `bids_under` | string | ✅ | 同上、raw mode のみ |
+| `asks_under` | string | ✅ | 同上、raw mode のみ |
+| `bids_over` | string | ✅ | 同上、raw mode のみ |
+| `ask_market` | string | ✅ | 同上、raw mode のみ。market order 待ち数量 |
+| `bid_market` | string | ✅ | 同上、raw mode のみ |
+| `timestamp` | number | ✅ | raw / summary（`normalized.timestamp`）の両方で number として保持 |
+| `sequenceId` | number | ✅ | raw mode のみ。`sequence_id` snake_case も拾うフォールバックがある (`tools/get_orderbook.ts`) |
 
 **注記**
 - 公式仕様: circuit_break_info.mode が `NONE` でない時、BBO ではなく見積価格基準で上下 200 件ずつ（最大 400 件）配信される。実装は `maxLevels: 200` で先頭から切り出すのみで、circuit break 由来の特殊配信形態を明示的にハンドリングしていない。
 - pressure / statistics mode は深度の `*_over` / `*_under` / `*_market` を捨てている。流動性スコアに加算すれば真の depth を反映できる余地あり。
+- 出力 `data` shape は mode ごとに完全に異なるため、`GetOrderbookDataSchemaOut` は `z.discriminatedUnion('mode', [...])` で型上も分岐する。実装は `parseAsResult(GetOrderbookOutputSchema, ok(...))` で末尾検証しており、`data.mode` / 各 mode の必須フィールドが乖離すると CI のテストが落ちる。
 
 ### 2.5 GET `/{pair}/transactions[/YYYYMMDD]`
 

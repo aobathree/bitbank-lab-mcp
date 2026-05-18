@@ -16,10 +16,10 @@ import { toIsoTime } from '../lib/datetime.js';
 import { estimateZones } from '../lib/depth-analysis.js';
 import { formatSummary, formatTimestampJST } from '../lib/formatter.js';
 import { BITBANK_API_BASE, DEFAULT_RETRIES, fetchJsonWithRateLimit } from '../lib/http.js';
-import { fail, failFromError, failFromValidation, ok } from '../lib/result.js';
+import { fail, failFromError, failFromValidation, ok, parseAsResult } from '../lib/result.js';
 import { createMeta, ensurePair, validateLimit } from '../lib/validate.js';
-import type { OrderbookLevelWithCum } from '../src/schemas.js';
-import { GetOrderbookInputSchema } from '../src/schemas.js';
+import type { GetOrderbookData, GetOrderbookMeta, OrderbookLevelWithCum } from '../src/schemas.js';
+import { GetOrderbookInputSchema, GetOrderbookOutputSchema } from '../src/schemas.js';
 import type { ToolDefinition } from '../src/tool-definition.js';
 
 export type OrderbookMode = 'summary' | 'pressure' | 'statistics' | 'raw';
@@ -517,9 +517,17 @@ export default async function getOrderbook(params: GetOrderbookParams | string =
 		result.text += boundary;
 
 		const meta = createMeta(chk.pair, { mode, topN, ...(rateLimit ? { rateLimit } : {}) });
-		return ok(result.text, result.data, meta);
+		return parseAsResult<GetOrderbookData, GetOrderbookMeta>(
+			GetOrderbookOutputSchema,
+			ok(result.text, result.data, meta),
+		);
 	} catch (err: unknown) {
-		return failFromError(err, { timeoutMs, defaultType: 'network', defaultMessage: 'ネットワークエラー' });
+		return failFromError(err, {
+			schema: GetOrderbookOutputSchema,
+			timeoutMs,
+			defaultType: 'network',
+			defaultMessage: 'ネットワークエラー',
+		});
 	}
 }
 

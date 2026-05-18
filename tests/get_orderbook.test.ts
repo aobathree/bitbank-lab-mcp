@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { GetOrderbookOutputSchema } from '../src/schemas.js';
 import getOrderbook, { toolDef } from '../tools/get_orderbook.js';
 import { assertFail, assertOk } from './_assertResult.js';
 import { depthError } from './fixtures/bitbank-api.js';
@@ -456,5 +457,35 @@ describe('get_orderbook', () => {
 			expect(res.summary).toContain('含まれるもの');
 			expect(res.summary).toContain(`mode=${mode}`);
 		}
+	});
+
+	// ─── OutputSchema 整合性 ──────────────────────────────
+	// mode 別 discriminated union が実装と乖離しないことを保証する。
+	// 実装が discriminator や enum 値を変えると schema parse が throw して即検出できる。
+
+	describe('OutputSchema 整合性', () => {
+		it('summary: 戻り値が OutputSchema を通る', async () => {
+			mockFetch(depthPayload());
+			const res = await getOrderbook({ pair: 'btc_jpy', mode: 'summary', topN: 2 });
+			expect(() => GetOrderbookOutputSchema.parse(res)).not.toThrow();
+		});
+
+		it('pressure: 戻り値が OutputSchema を通る', async () => {
+			mockFetch(richDepthPayload());
+			const res = await getOrderbook({ pair: 'btc_jpy', mode: 'pressure', bandsPct: [0.001, 0.005, 0.01] });
+			expect(() => GetOrderbookOutputSchema.parse(res)).not.toThrow();
+		});
+
+		it('statistics: 戻り値が OutputSchema を通る', async () => {
+			mockFetch(richDepthPayload());
+			const res = await getOrderbook({ pair: 'btc_jpy', mode: 'statistics', ranges: [0.5, 1.0, 2.0], priceZones: 5 });
+			expect(() => GetOrderbookOutputSchema.parse(res)).not.toThrow();
+		});
+
+		it('raw: 戻り値が OutputSchema を通る', async () => {
+			mockFetch(richDepthPayload());
+			const res = await getOrderbook({ pair: 'btc_jpy', mode: 'raw' });
+			expect(() => GetOrderbookOutputSchema.parse(res)).not.toThrow();
+		});
 	});
 });

@@ -27,6 +27,9 @@ export const GetTickerMetaSchemaOut = BaseMetaSchema;
 export const GetTickerOutputSchema = toolResultSchema(GetTickerDataSchemaOut, GetTickerMetaSchemaOut);
 export const GetTickerInputSchema = BasePairInputSchema;
 
+// === Depth (raw depth tuple, shared by /depth tool and orderbook raw mode) ===
+export const DepthLevelTupleSchema = z.tuple([z.string(), z.string()]);
+
 // === Orderbook ===
 export const OrderbookLevelSchema = z.object({ price: z.number(), size: z.number() });
 export const OrderbookLevelWithCumSchema = OrderbookLevelSchema.extend({ cumSize: z.number() });
@@ -41,8 +44,117 @@ export const OrderbookNormalizedSchema = z.object({
 	timestamp: z.number().nullable(),
 	isoTime: z.string().nullable(),
 });
-export const GetOrderbookDataSchemaOut = z.object({ raw: z.unknown(), normalized: OrderbookNormalizedSchema });
-export const GetOrderbookMetaSchemaOut = BaseMetaSchema.extend({ topN: z.number(), count: z.number() });
+
+const OrderbookPressureTagEnum = z.enum(['notice', 'warning', 'strong']);
+
+// mode=summary
+export const OrderbookSummaryDataSchema = z.object({
+	mode: z.literal('summary'),
+	normalized: OrderbookNormalizedSchema,
+});
+
+// mode=pressure
+export const OrderbookPressureBandSchema = z.object({
+	widthPct: z.number(),
+	baseMid: z.number().nullable(),
+	baseBidSize: z.number(),
+	baseAskSize: z.number(),
+	bidDelta: z.number(),
+	askDelta: z.number(),
+	netDelta: z.number(),
+	netDeltaPct: z.number().nullable(),
+	tag: OrderbookPressureTagEnum.nullable(),
+});
+export const OrderbookPressureDataSchema = z.object({
+	mode: z.literal('pressure'),
+	bands: z.array(OrderbookPressureBandSchema),
+	aggregates: z.object({
+		netDelta: z.number(),
+		strongestTag: OrderbookPressureTagEnum.nullable(),
+	}),
+});
+
+// mode=statistics
+export const OrderbookStatisticsDataSchema = z.object({
+	mode: z.literal('statistics'),
+	basic: z.object({
+		currentPrice: z.number().nullable(),
+		bestBid: z.number().nullable(),
+		bestAsk: z.number().nullable(),
+		spread: z.number().nullable(),
+		spreadPct: z.number().nullable(),
+	}),
+	ranges: z.array(
+		z.object({
+			pct: z.number(),
+			bidVolume: z.number(),
+			askVolume: z.number(),
+			bidValue: z.number(),
+			askValue: z.number(),
+			ratio: z.number(),
+			interpretation: z.string(),
+		}),
+	),
+	liquidityZones: z.array(
+		z.object({
+			priceRange: z.string(),
+			bidVolume: z.number(),
+			askVolume: z.number(),
+			dominance: z.enum(['bid', 'ask', 'balanced']),
+			note: z.string().optional(),
+		}),
+	),
+	largeOrders: z.object({
+		bids: z.array(z.object({ price: z.number(), size: z.number(), distance: z.number().nullable() })),
+		asks: z.array(z.object({ price: z.number(), size: z.number(), distance: z.number().nullable() })),
+		threshold: z.number(),
+	}),
+	summary: z.object({
+		overall: z.string(),
+		strength: z.enum(['weak', 'moderate', 'strong']),
+		liquidity: z.enum(['low', 'medium', 'high']),
+		recommendation: z.string(),
+	}),
+});
+
+// mode=raw（bitbank /depth の生値 + 壁ゾーン推定 overlay）
+// 公式 API は asks_over などを string で返すが、テスト fixture では number リテラルを渡すため両方を許容する。
+export const OrderbookRawDataSchema = z.object({
+	mode: z.literal('raw'),
+	asks: z.array(DepthLevelTupleSchema),
+	bids: z.array(DepthLevelTupleSchema),
+	asks_over: z.union([z.string(), z.number()]).optional(),
+	asks_under: z.union([z.string(), z.number()]).optional(),
+	bids_over: z.union([z.string(), z.number()]).optional(),
+	bids_under: z.union([z.string(), z.number()]).optional(),
+	ask_market: z.union([z.string(), z.number()]).optional(),
+	bid_market: z.union([z.string(), z.number()]).optional(),
+	timestamp: z.number().int(),
+	sequenceId: z.number().int().optional(),
+	overlays: z
+		.object({
+			depth_zones: z.array(
+				z.object({
+					low: z.number(),
+					high: z.number(),
+					color: z.string().optional(),
+					label: z.string().optional(),
+				}),
+			),
+		})
+		.optional(),
+});
+
+export const GetOrderbookDataSchemaOut = z.discriminatedUnion('mode', [
+	OrderbookSummaryDataSchema,
+	OrderbookPressureDataSchema,
+	OrderbookStatisticsDataSchema,
+	OrderbookRawDataSchema,
+]);
+export const GetOrderbookMetaSchemaOut = BaseMetaSchema.extend({
+	mode: z.enum(['summary', 'pressure', 'statistics', 'raw']),
+	topN: z.number(),
+});
 export const GetOrderbookOutputSchema = toolResultSchema(GetOrderbookDataSchemaOut, GetOrderbookMetaSchemaOut);
 
 export const GetOrderbookInputSchema = BasePairInputSchema.extend({
@@ -143,7 +255,6 @@ export const GetTransactionsInputSchema = BasePairInputSchema.extend({
 });
 
 // === Depth (raw depth for analysis/visualization) ===
-export const DepthLevelTupleSchema = z.tuple([z.string(), z.string()]);
 export const GetDepthDataSchemaOut = z.object({
 	asks: z.array(DepthLevelTupleSchema),
 	bids: z.array(DepthLevelTupleSchema),
