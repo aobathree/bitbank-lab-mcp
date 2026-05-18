@@ -196,3 +196,249 @@ describe('toolDef handler', () => {
 		expect(sc.data).toHaveProperty('ranked');
 	});
 });
+
+// ─── NaN / Infinity normalization (PR4) ───────────────────────────────────────
+
+describe('toolDef handler — NaN/Infinity normalization', () => {
+	const makeMockedRes = (data: unknown[]) => ({ ok: true, summary: 'ok', data, meta: {} });
+
+	it('malformed string ("abc") は lastN / volumeInJPY 共に null になる', async () => {
+		mockedGetTickersJpy.mockResolvedValueOnce(
+			makeMockedRes([
+				{
+					pair: 'bad_jpy',
+					last: 'abc',
+					open: '100',
+					high: '110',
+					low: '90',
+					buy: '99',
+					sell: '101',
+					vol: '1.0',
+				},
+			]) as never,
+		);
+		const res = await toolDef.handler({ view: 'ranked', sortBy: 'change24h', order: 'desc', limit: 1 });
+		const sc = (res as { structuredContent: { data: { items: Array<Record<string, unknown>> } } }).structuredContent;
+		const item = sc.data.items[0];
+		expect(item.lastN).toBeNull();
+		expect(item.volumeInJPY).toBeNull();
+	});
+
+	it('空文字 / null フィールドは N (正規化後) で null になる', async () => {
+		mockedGetTickersJpy.mockResolvedValueOnce(
+			makeMockedRes([
+				{
+					pair: 'empty_jpy',
+					last: '100',
+					open: '95',
+					high: '110',
+					low: '90',
+					buy: null,
+					sell: '',
+					vol: '',
+				},
+			]) as never,
+		);
+		const res = await toolDef.handler({ view: 'items' });
+		const sc = (res as { structuredContent: { data: { items: Array<Record<string, unknown>> } } }).structuredContent;
+		const item = sc.data.items[0];
+		expect(item.volN).toBeNull();
+		expect(item.buyN).toBeNull();
+		expect(item.sellN).toBeNull();
+		expect(item.volumeInJPY).toBeNull();
+	});
+
+	it('Infinity / -Infinity が上流から来たら null に正規化される', async () => {
+		mockedGetTickersJpy.mockResolvedValueOnce(
+			makeMockedRes([
+				{
+					pair: 'inf_jpy',
+					last: Infinity,
+					open: -Infinity,
+					high: '110',
+					low: '90',
+					buy: '99',
+					sell: '101',
+					vol: '1.0',
+				},
+			]) as never,
+		);
+		const res = await toolDef.handler({ view: 'items' });
+		const sc = (res as { structuredContent: { data: { items: Array<Record<string, unknown>> } } }).structuredContent;
+		const item = sc.data.items[0];
+		expect(item.lastN).toBeNull();
+		expect(item.openN).toBeNull();
+		expect(item.volumeInJPY).toBeNull();
+	});
+
+	it('異常値ペアが ranked sort の末尾（desc, change）に来る', async () => {
+		mockedGetTickersJpy.mockResolvedValueOnce(
+			makeMockedRes([
+				{
+					pair: 'good_jpy',
+					last: '110',
+					open: '100',
+					high: '120',
+					low: '90',
+					buy: '109',
+					sell: '111',
+					vol: '1.0',
+				}, // +10%
+				{
+					pair: 'bad_jpy',
+					last: 'abc',
+					open: 'xyz',
+					high: '0',
+					low: '0',
+					buy: '0',
+					sell: '0',
+					vol: 'NaN',
+				}, // changeN=null
+			]) as never,
+		);
+		const res = await toolDef.handler({ view: 'ranked', sortBy: 'change24h', order: 'desc', limit: 2 });
+		const sc = (res as { structuredContent: { data: { ranked: Array<{ pair: string }> } } }).structuredContent;
+		expect(sc.data.ranked[0].pair).toBe('good_jpy');
+		expect(sc.data.ranked[1].pair).toBe('bad_jpy');
+	});
+
+	it('異常値ペアが ranked sort の先頭（asc, change）に来る', async () => {
+		mockedGetTickersJpy.mockResolvedValueOnce(
+			makeMockedRes([
+				{
+					pair: 'good_jpy',
+					last: '110',
+					open: '100',
+					high: '120',
+					low: '90',
+					buy: '109',
+					sell: '111',
+					vol: '1.0',
+				},
+				{
+					pair: 'bad_jpy',
+					last: 'abc',
+					open: 'xyz',
+					high: '0',
+					low: '0',
+					buy: '0',
+					sell: '0',
+					vol: 'NaN',
+				},
+			]) as never,
+		);
+		const res = await toolDef.handler({ view: 'ranked', sortBy: 'change24h', order: 'asc', limit: 2 });
+		const sc = (res as { structuredContent: { data: { ranked: Array<{ pair: string }> } } }).structuredContent;
+		expect(sc.data.ranked[0].pair).toBe('bad_jpy');
+		expect(sc.data.ranked[1].pair).toBe('good_jpy');
+	});
+
+	it('view=ranked の structuredContent が GetTickersJpyHandlerOutputSchema.parse() を通る', async () => {
+		const { GetTickersJpyHandlerOutputSchema } = await import('../../src/schemas.js');
+		mockedGetTickersJpy.mockResolvedValueOnce(
+			makeMockedRes([
+				{
+					pair: 'btc_jpy',
+					last: '5000000',
+					open: '4900000',
+					high: '5100000',
+					low: '4800000',
+					buy: '4999000',
+					sell: '5001000',
+					vol: '10',
+				},
+				{
+					pair: 'bad_jpy',
+					last: 'abc',
+					open: '',
+					high: '0',
+					low: '0',
+					buy: null,
+					sell: undefined,
+					vol: Infinity,
+				},
+			]) as never,
+		);
+		const res = await toolDef.handler({ view: 'ranked', sortBy: 'change24h', order: 'desc', limit: 5 });
+		const sc = (res as { structuredContent: Record<string, unknown> }).structuredContent;
+		expect(() => GetTickersJpyHandlerOutputSchema.parse(sc)).not.toThrow();
+	});
+
+	it('view=items の structuredContent が GetTickersJpyHandlerOutputSchema.parse() を通る', async () => {
+		const { GetTickersJpyHandlerOutputSchema } = await import('../../src/schemas.js');
+		mockedGetTickersJpy.mockResolvedValueOnce(
+			makeMockedRes([
+				{
+					pair: 'btc_jpy',
+					last: '5000000',
+					open: '4900000',
+					high: '5100000',
+					low: '4800000',
+					buy: '4999000',
+					sell: '5001000',
+					vol: '10',
+				},
+				{
+					pair: 'bad_jpy',
+					last: 'abc',
+					open: '',
+					high: '0',
+					low: '0',
+					buy: null,
+					sell: undefined,
+					vol: Infinity,
+				},
+			]) as never,
+		);
+		const res = await toolDef.handler({ view: 'items' });
+		const sc = (res as { structuredContent: Record<string, unknown> }).structuredContent;
+		expect(() => GetTickersJpyHandlerOutputSchema.parse(sc)).not.toThrow();
+	});
+
+	it('有限数同士の積がオーバーフローしても volumeInJPY は null になる', async () => {
+		mockedGetTickersJpy.mockResolvedValueOnce(
+			makeMockedRes([
+				{
+					pair: 'huge_jpy',
+					last: '1e308',
+					open: '1e308',
+					high: '1e308',
+					low: '1e308',
+					buy: '1e308',
+					sell: '1e308',
+					vol: '1e308',
+				},
+			]) as never,
+		);
+		const res = await toolDef.handler({ view: 'items' });
+		const sc = (res as { structuredContent: { data: { items: Array<Record<string, unknown>> } } }).structuredContent;
+		const item = sc.data.items[0];
+		// 1e308 * 1e308 = Infinity → null に正規化されている
+		expect(item.lastN).toBe(1e308);
+		expect(item.volN).toBe(1e308);
+		expect(item.volumeInJPY).toBeNull();
+	});
+
+	it('structuredContent に NaN / Infinity が混入しない', async () => {
+		mockedGetTickersJpy.mockResolvedValueOnce(
+			makeMockedRes([
+				{
+					pair: 'bad_jpy',
+					last: 'abc',
+					open: Infinity,
+					high: '0',
+					low: '0',
+					buy: '0',
+					sell: '0',
+					vol: NaN,
+				},
+			]) as never,
+		);
+		const res = await toolDef.handler({ view: 'ranked', sortBy: 'change24h', order: 'desc', limit: 1 });
+		const sc = (res as { structuredContent: Record<string, unknown> }).structuredContent;
+		// 正規化フィールドに NaN / Infinity がないことを確認
+		const json = JSON.stringify(sc);
+		expect(json).not.toContain('NaN');
+		expect(json).not.toContain('Infinity');
+	});
+});

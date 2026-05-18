@@ -1,6 +1,8 @@
 import { z } from 'zod';
+import { toNum } from '../../lib/conversions.js';
 import { formatPercent, formatPrice, formatVolumeJPY } from '../../lib/formatter.js';
 import getTickersJpy from '../../tools/get_tickers_jpy.js';
+import { GetTickersJpyHandlerOutputSchema } from '../schemas.js';
 import type { ToolDefinition } from '../tool-definition.js';
 
 export interface NormalizedTicker {
@@ -85,29 +87,30 @@ export const toolDef: ToolDefinition = {
 
 		// normalize numeric fields（open/high/low 追加）
 		const norm = items.map((it) => {
-			const lastN = it?.last != null ? Number(it.last) : null;
-			const openN = it?.open != null ? Number(it.open) : null;
-			const highN = it?.high != null ? Number(it.high) : null;
-			const lowN = it?.low != null ? Number(it.low) : null;
-			const buyN = it?.buy != null ? Number(it.buy) : null;
-			const sellN = it?.sell != null ? Number(it.sell) : null;
+			const lastN = toNum(it?.last);
+			const openN = toNum(it?.open);
+			const highN = toNum(it?.high);
+			const lowN = toNum(it?.low);
+			const buyN = toNum(it?.buy);
+			const sellN = toNum(it?.sell);
 			const change = it?.change24h ?? it?.change24hPct;
 			const changeN =
 				change != null
-					? Number(change)
+					? toNum(change)
 					: openN != null && openN > 0 && lastN != null
 						? Number((((lastN - openN) / openN) * 100).toFixed(2))
 						: null;
-			const volN = it?.vol != null ? Number(it.vol) : null;
-			const volumeInJPY =
-				volN != null && lastN != null && Number.isFinite(volN) && Number.isFinite(lastN) ? volN * lastN : null;
+			const volN = toNum(it?.vol);
+			// 有限数同士の積でも 1e308 * 1e308 のように Infinity へオーバーフローし得るため、結果側も明示的に弾く。
+			const product = volN != null && lastN != null ? volN * lastN : null;
+			const volumeInJPY = product != null && Number.isFinite(product) ? product : null;
 			return { ...it, lastN, openN, highN, lowN, buyN, sellN, changeN, volN, volumeInJPY };
 		});
 
 		// ranking logic
 		const cmpNum = (a?: number | null, b?: number | null) => {
-			const aa = a == null || Number.isNaN(a) ? -Infinity : a;
-			const bb = b == null || Number.isNaN(b) ? -Infinity : b;
+			const aa = a == null ? -Infinity : a;
+			const bb = b == null ? -Infinity : b;
 			return aa - bb;
 		};
 		const sorted = [...norm].sort((a, b) => {
@@ -124,22 +127,29 @@ export const toolDef: ToolDefinition = {
 
 		if (view === 'ranked') {
 			const text = buildTickersJpyRankedText(items.length, ranked, sortBy, order, limit);
+			const structured = GetTickersJpyHandlerOutputSchema.parse({
+				ok: true,
+				summary: `ranked ${ranked.length}/${items.length}`,
+				data: { items: norm, ranked },
+				meta: res?.meta ?? {},
+			});
 			return {
 				content: [{ type: 'text', text }],
-				structuredContent: {
-					ok: true,
-					summary: `ranked ${ranked.length}/${items.length}`,
-					data: { items: norm, ranked },
-					meta: res?.meta ?? {},
-				} as Record<string, unknown>,
+				structuredContent: structured as unknown as Record<string, unknown>,
 			};
 		}
 
 		// view=items: 全データ一覧（上位5件をサマリ表示）
 		const text = buildTickersJpyItemsText(norm);
+		const structured = GetTickersJpyHandlerOutputSchema.parse({
+			ok: true,
+			summary: res?.summary ?? `items ${norm.length}`,
+			data: { items: norm },
+			meta: res?.meta ?? {},
+		});
 		return {
 			content: [{ type: 'text', text }],
-			structuredContent: { ...res, data: { items: norm } } as Record<string, unknown>,
+			structuredContent: structured as unknown as Record<string, unknown>,
 		};
 	},
 };

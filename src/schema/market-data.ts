@@ -400,6 +400,34 @@ export const GetTickersJpyOutputSchema = z.union([
 	FailResultSchema,
 ]);
 
+// === get_tickers_jpy handler (NormalizedTicker shape) ===
+// handler が structuredContent に渡す正規化済みティッカー。
+// z.number() は NaN を reject するため、NaN/Infinity が混入したら parse 失敗で検出できる。
+export const NormalizedTickerSchema = z
+	.object({
+		pair: z.string(),
+		lastN: z.number().nullable(),
+		openN: z.number().nullable(),
+		highN: z.number().nullable(),
+		lowN: z.number().nullable(),
+		buyN: z.number().nullable(),
+		sellN: z.number().nullable(),
+		changeN: z.number().nullable(),
+		volN: z.number().nullable(),
+		volumeInJPY: z.number().nullable(),
+	})
+	.passthrough(); // 元の bitbank フィールド（last/open/...）は残す
+
+export const GetTickersJpyHandlerOutputSchema = z.object({
+	ok: z.literal(true),
+	summary: z.string(),
+	data: z.object({
+		items: z.array(NormalizedTickerSchema),
+		ranked: z.array(NormalizedTickerSchema).optional(),
+	}),
+	meta: z.record(z.string(), z.unknown()),
+});
+
 // === Market Summary (tickers + volatility snapshot) ===
 export const MarketSummaryItemSchema = z.object({
 	pair: z.string(),
