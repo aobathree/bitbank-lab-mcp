@@ -91,7 +91,9 @@ export const OrderbookStatisticsDataSchema = z.object({
 			askVolume: z.number(),
 			bidValue: z.number(),
 			askValue: z.number(),
-			ratio: z.number(),
+			// ask 板が枯れて bid だけ存在するとき実装は Infinity を返す（tools/get_orderbook.ts buildStatistics）。
+			// Zod v4 の z.number() は Infinity を拒否するので、実態に合わせて literal(Infinity) を許容する。
+			ratio: z.union([z.number(), z.literal(Number.POSITIVE_INFINITY)]),
 			interpretation: z.string(),
 		}),
 	),

@@ -464,27 +464,59 @@ describe('get_orderbook', () => {
 	// 実装が discriminator や enum 値を変えると schema parse が throw して即検出できる。
 
 	describe('OutputSchema 整合性', () => {
+		// 注: GetOrderbookOutputSchema は ok / fail の union を受けるため、
+		// parse が通るだけでは ok の data 形状を検証したことにならない。
+		// 各ケースで先に assertOk(res) で ok を確定させてから parse する。
+
 		it('summary: 戻り値が OutputSchema を通る', async () => {
 			mockFetch(depthPayload());
 			const res = await getOrderbook({ pair: 'btc_jpy', mode: 'summary', topN: 2 });
+			assertOk(res);
 			expect(() => GetOrderbookOutputSchema.parse(res)).not.toThrow();
 		});
 
 		it('pressure: 戻り値が OutputSchema を通る', async () => {
 			mockFetch(richDepthPayload());
 			const res = await getOrderbook({ pair: 'btc_jpy', mode: 'pressure', bandsPct: [0.001, 0.005, 0.01] });
+			assertOk(res);
 			expect(() => GetOrderbookOutputSchema.parse(res)).not.toThrow();
 		});
 
 		it('statistics: 戻り値が OutputSchema を通る', async () => {
 			mockFetch(richDepthPayload());
 			const res = await getOrderbook({ pair: 'btc_jpy', mode: 'statistics', ranges: [0.5, 1.0, 2.0], priceZones: 5 });
+			assertOk(res);
 			expect(() => GetOrderbookOutputSchema.parse(res)).not.toThrow();
 		});
 
 		it('raw: 戻り値が OutputSchema を通る', async () => {
 			mockFetch(richDepthPayload());
 			const res = await getOrderbook({ pair: 'btc_jpy', mode: 'raw' });
+			assertOk(res);
+			expect(() => GetOrderbookOutputSchema.parse(res)).not.toThrow();
+		});
+
+		it('statistics: ratio=Infinity（ask 板 size=0、bid 側だけ vol>0）でも OutputSchema を通る', async () => {
+			// best bid と best ask が同価で並ぶ + ask の size が 0 のとき、
+			// buildStatistics の sumWithinPct で ask.vol=0 / bid.vol>0 となり ratio が Infinity になる。
+			// この Zod 拒否経路を回帰防止する。
+			mockFetch({
+				success: 1,
+				data: {
+					asks: [
+						['5000000', '0'],
+						['5000100', '0'],
+					],
+					bids: [
+						['5000000', '1.0'],
+						['4999900', '10.0'],
+					],
+					timestamp: 1_700_000_000_000,
+				},
+			});
+			const res = await getOrderbook({ pair: 'btc_jpy', mode: 'statistics', ranges: [0.5] });
+			assertOk(res);
+			expect(d(res).ranges[0].ratio).toBe(Infinity);
 			expect(() => GetOrderbookOutputSchema.parse(res)).not.toThrow();
 		});
 	});
