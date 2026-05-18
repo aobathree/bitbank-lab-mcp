@@ -318,6 +318,33 @@ describe('get_transactions', () => {
 			expect(parsed).toHaveLength(4);
 		});
 
+		it('view=items でも drop 警告は content に伝搬する（content[0] は JSON 配列を維持し warning は content[1]）', async () => {
+			const malformed: Array<Record<string, unknown>> = [
+				{ transaction_id: 1, price: '4000000', amount: '0.05', side: 'buy', executed_at: '1700000000000' },
+				{ transaction_id: 2, price: '5000000', amount: '0.5', side: 'sell', executed_at: '1700000001000' },
+				{ transaction_id: 3, amount: '0.7', side: 'buy', executed_at: '1700000002000' },
+				{ transaction_id: 4, price: '6000000', amount: '1.0', side: 'buy', executed_at: '1700000003000' },
+			];
+			globalThis.fetch = mockFetchOk({ success: 1, data: { transactions: malformed } });
+
+			const res = (await toolDef.handler({ pair: 'btc_jpy', limit: 10, view: 'items' })) as {
+				content: Array<{ type: string; text: string }>;
+			};
+			const parsed = JSON.parse(res.content[0].text);
+			expect(Array.isArray(parsed)).toBe(true);
+			expect(parsed).toHaveLength(3);
+			expect(res.content).toHaveLength(2);
+			expect(res.content[1].text).toContain('1件');
+		});
+
+		it('view=items で drop が無ければ content は 1 要素のまま', async () => {
+			fixture(rows);
+			const res = (await toolDef.handler({ pair: 'btc_jpy', limit: 10, view: 'items' })) as {
+				content: Array<{ type: string; text: string }>;
+			};
+			expect(res.content).toHaveLength(1);
+		});
+
 		it('handler 経由でも transaction_id が保持される', async () => {
 			fixture(rows);
 			const res = (await toolDef.handler({ pair: 'btc_jpy', limit: 10 })) as {

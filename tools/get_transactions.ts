@@ -244,8 +244,12 @@ export const toolDef: ToolDefinition = {
 			: res.summary;
 		if (view === 'items') {
 			const text = JSON.stringify(items, null, 2);
+			const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text }];
+			if (res.meta?.warning) {
+				content.push({ type: 'text', text: res.meta.warning });
+			}
 			return {
-				content: [{ type: 'text', text }],
+				content,
 				structuredContent: { ...res, summary, data: { ...res.data, normalized: items } } as Record<string, unknown>,
 			};
 		}
