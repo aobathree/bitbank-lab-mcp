@@ -174,7 +174,7 @@
 **注記**:
 - 公式 spec の `candlestick[].timestamp`（公開日時、各 ohlcv の ts とは別）は破棄しており、契約照合上は不完全。
 - 公式 spec では `ohlcv` 配列の volume が「base 通貨建ての合算」であり、買い/売り内訳は無い。実装も同前提でコメント済み (`tools/get_candles.ts:275-276`)。
-- multi-year 取得（4hour 以上の type）は `currentYear = dayjs().year()` を起点に `currentYear - i` を生成しており（`tools/get_candles.ts:154-155`）、入力の `date` (YYYY) を起点にしていない。`date=2020` で `limit=2000` の `1day` を要求しても 2025 / 2024 を取りに行く可能性があり、ユーザー指定年と乖離する。テスト未確認。
+- multi-year 取得（4hour 以上の type）は `date` パラメータで指定された年（または YYYYMMDD の YYYY 部分）を起点に過去年へ遡る。`date` 未指定時のみ現在年起点。`tests/get_candles.test.ts` の `multi-year: date パラメータを起点に取得する` describe で検証済み。
 
 ### 2.7 GET `/{pair}/circuit_break_info`
 
@@ -612,7 +612,7 @@
 - [x] **`transaction_id` を `get_transactions` の normalized に含める** — 重複検出 / 突合が不可能な現状を解消。✅ PR #462 で実装済み（`TransactionItemSchema` に optional 追加）。
 - [x] **`get_transactions` テスト拡充** — 81 行・6 ケースは薄い。日付フォーマット境界、空配列、API 異常系、`maxAmount` / `maxPrice` フィルタ未検証。✅ PR #462 で 24 ケースに拡充済み。
 - [ ] **Public 全取得系で `success:0` fixture テスト追加** — `get_candles` / `get_orderbook` は `data` 構造で間接的に弾いているのみ。fixture でレスポンス封筒 `success:0` を返した時の挙動を検証する必要あり（`get_transactions` は PR #462 で対応済み）。
-- [ ] **`get_candles` multi-year の起点を `date` パラメータ基準に修正、または明示的に「current year 起点」と仕様化** — 現状 `currentYear = dayjs().year()` 固定で、ユーザー指定 `date=2020` で過去年データを期待しても 2025/2024 を取得してしまう可能性。テストで実挙動を確定させる。
+- [x] **`get_candles` multi-year の起点を `date` パラメータ基準に修正、または明示的に「current year 起点」と仕様化** — ✅ `date` 指定時は YYYY 部分を起点、未指定時は現在年起点に修正。`tools/get_candles.ts` の `anchorYear` で分岐し、`tests/get_candles.test.ts` の `multi-year: date パラメータを起点に取得する` describe で 1day / 4hour / 1week / 1month / YYYYMMDD 入力 / multi-day 非干渉を検証済み。
 - [ ] **`70020`（circuit break 中の market 拒否）のエラーマッピング** — `create_order` の `codeMessages` に追加。
 - [ ] **`OrderStatusEnum` に `REJECTED` / `TRIGGERED` を追加し `OrderResponseSchema.status` を enum 化** — 現状 `z.string()` で受けているため誤値検出が弱い。
 - [ ] **`SpotOrderTypeEnum` に `take_profit` / `stop_loss` 入力サポート可否を再検討** — 公式 spec の `POST /user/spot/order` に列挙されているが実装は 4 種のみ。bitbank が現物で本当に受け付けるか動作確認の上、対応 or 「意図的に未対応」として明文化。

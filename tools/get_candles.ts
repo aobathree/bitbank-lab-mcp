@@ -132,7 +132,7 @@ function _getDateNDaysAgo(n: number): string {
 export default async function getCandles(
 	pair: string,
 	type: CandleType | string = '1day',
-	date: string | undefined = todayYyyymmdd(),
+	date?: string,
 	limit: number = 200,
 	tz: string = 'Asia/Tokyo',
 ): Promise<OkResult<GetCandlesData, GetCandlesMeta> | FailResult> {
@@ -143,6 +143,7 @@ export default async function getCandles(
 		return fail(`type は ${[...TYPES].join(', ')} から選択してください（指定値: ${String(type)}）`, 'user');
 	}
 
+	const dateProvided = date != null;
 	const effectiveDate = date ?? todayYyyymmdd();
 	const dateCheck = validateDate(effectiveDate, String(type));
 	if (!dateCheck.ok) return failFromValidation(dateCheck);
@@ -153,16 +154,25 @@ export default async function getCandles(
 	const barsPerYear = BARS_PER_YEAR[type] || 365;
 	const barsPerDay = BARS_PER_DAY[type] || 24;
 
-	// 年初付近では今年のデータだけでは足りない場合があるため、
-	// 今年の経過日数も考慮して必要年数を計算
+	// 起点年（multi-year のみ参照）:
+	//   - date 指定時 → その年（過去年は丸ごと利用可能）
+	//   - date 未指定 → 現在年（部分年であり経過日数を考慮）
+	// 公式 API は YYYY 指定で 1 年分の candlestick を返す（4hour 以上の YEARLY_TYPES のみ）。
+	const currentYear = dayjs().year();
+	const anchorYear = dateProvided && isYearlyType ? Number(dateCheck.value) : currentYear;
+	const isCurrentYearAnchor = anchorYear === currentYear;
+
+	// 現在年起点のときだけ「経過日数で利用可能本数が制限される」ガードが必要。
+	// 過去年起点なら anchorYear は丸ごと使える前提で ceil(limit / barsPerYear) のみで足りる。
 	const now = dayjs();
 	const startOfYear = now.startOf('year');
 	const dayOfYear = now.diff(startOfYear, 'day') + 1;
 	const estimatedBarsThisYear = Math.floor(dayOfYear * (barsPerYear / 365));
 
-	// limit が今年の推定本数を超える場合、または単純計算で複数年が必要な場合
 	const yearsNeeded = isYearlyType
-		? Math.max(Math.ceil(limit / barsPerYear), limit > estimatedBarsThisYear ? 2 : 1)
+		? isCurrentYearAnchor
+			? Math.max(Math.ceil(limit / barsPerYear), limit > estimatedBarsThisYear ? 2 : 1)
+			: Math.ceil(limit / barsPerYear)
 		: 1;
 	const needsMultiYear = isYearlyType && yearsNeeded > 1;
 
@@ -182,9 +192,8 @@ export default async function getCandles(
 
 	try {
 		if (needsMultiYear) {
-			// 複数年の並列取得
-			const currentYear = dayjs().year();
-			const years = Array.from({ length: yearsNeeded }, (_, i) => currentYear - i);
+			// 複数年の並列取得（起点は anchorYear＝date 指定時はその年、未指定時は現在年）
+			const years = Array.from({ length: yearsNeeded }, (_, i) => anchorYear - i);
 
 			const results = await Promise.all(years.map((year) => fetchSingleYear(chk.pair, type, year)));
 			// 最後に成功したレスポンスの rateLimit を採用

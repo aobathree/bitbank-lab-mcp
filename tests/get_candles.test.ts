@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { dayjs } from '../lib/datetime.js';
 import getCandles from '../tools/get_candles.js';
 import { assertFail, assertOk } from './_assertResult.js';
 import { candlesError } from './fixtures/bitbank-api.js';
@@ -207,6 +208,137 @@ describe('getCandles', () => {
 
 		// Should have made multiple fetch calls (one per year)
 		expect(fetchMock.mock.calls.length).toBeGreaterThan(1);
+	});
+
+	// ── multi-year 起点年（date パラメータの遵守） ──
+
+	describe('multi-year: date パラメータを起点に取得する', () => {
+		const buildSuccessMock = () => {
+			const baseTs = 1577836800000; // 2020-01-01 UTC
+			const ohlcv = Array.from({ length: 365 }, (_, i) => [
+				'100',
+				'110',
+				'90',
+				'105',
+				'1.0',
+				String(baseTs + i * 86400000),
+			]);
+			return vi.fn().mockResolvedValue({
+				ok: true,
+				status: 200,
+				statusText: 'OK',
+				json: async () => ({
+					success: 1,
+					data: { candlestick: [{ ohlcv }] },
+				}),
+			});
+		};
+
+		it('1day: date 指定時はその年を起点に過去年を取得する', async () => {
+			const fetchMock = buildSuccessMock();
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+			await getCandles('btc_jpy', '1day', '2020', 2000);
+
+			const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+			// 起点年 2020 が含まれる
+			expect(calledUrls.some((u) => u.endsWith('/btc_jpy/candlestick/1day/2020'))).toBe(true);
+			// 2020 より新しい年は呼ばれていない（現在年起点になっていないことを確認）
+			for (let y = 2021; y <= 2030; y++) {
+				expect(calledUrls.some((u) => u.endsWith(`/btc_jpy/candlestick/1day/${y}`))).toBe(false);
+			}
+		});
+
+		it('1day: date が YYYYMMDD 形式でも YYYY 部分を起点とする', async () => {
+			const fetchMock = buildSuccessMock();
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+			await getCandles('btc_jpy', '1day', '20201225', 2000);
+
+			const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+			expect(calledUrls.some((u) => u.endsWith('/btc_jpy/candlestick/1day/2020'))).toBe(true);
+			for (let y = 2021; y <= 2030; y++) {
+				expect(calledUrls.some((u) => u.endsWith(`/btc_jpy/candlestick/1day/${y}`))).toBe(false);
+			}
+		});
+
+		it('4hour: date 指定時はその年を起点に過去年を取得する', async () => {
+			const fetchMock = buildSuccessMock();
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+			await getCandles('btc_jpy', '4hour', '2020', 5000);
+
+			const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+			expect(calledUrls.some((u) => u.endsWith('/btc_jpy/candlestick/4hour/2020'))).toBe(true);
+			for (let y = 2021; y <= 2030; y++) {
+				expect(calledUrls.some((u) => u.endsWith(`/btc_jpy/candlestick/4hour/${y}`))).toBe(false);
+			}
+		});
+
+		it('1week: date 指定時はその年を起点に過去年を取得する', async () => {
+			const fetchMock = buildSuccessMock();
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+			await getCandles('btc_jpy', '1week', '2018', 200);
+
+			const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+			expect(calledUrls.some((u) => u.endsWith('/btc_jpy/candlestick/1week/2018'))).toBe(true);
+			for (let y = 2019; y <= 2030; y++) {
+				expect(calledUrls.some((u) => u.endsWith(`/btc_jpy/candlestick/1week/${y}`))).toBe(false);
+			}
+		});
+
+		it('1month: date 指定時はその年を起点に過去年を取得する', async () => {
+			const fetchMock = buildSuccessMock();
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+			await getCandles('btc_jpy', '1month', '2017', 100);
+
+			const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+			expect(calledUrls.some((u) => u.endsWith('/btc_jpy/candlestick/1month/2017'))).toBe(true);
+			for (let y = 2018; y <= 2030; y++) {
+				expect(calledUrls.some((u) => u.endsWith(`/btc_jpy/candlestick/1month/${y}`))).toBe(false);
+			}
+		});
+
+		it('date 未指定時は現在年を起点に過去年を取得する（従来挙動）', async () => {
+			const fetchMock = buildSuccessMock();
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+			await getCandles('btc_jpy', '1day', undefined, 2000);
+
+			const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+			const currentYear = dayjs().year();
+			expect(calledUrls.some((u) => u.endsWith(`/btc_jpy/candlestick/1day/${currentYear}`))).toBe(true);
+		});
+
+		it('multi-day 取得には影響しない: 1hour + date 指定はそのまま YYYYMMDD を起点とする', async () => {
+			const baseTs = 1705276800000; // 2024-01-15
+			const ohlcv = Array.from({ length: 24 }, (_, i) => [
+				'100',
+				'110',
+				'90',
+				'105',
+				'1.0',
+				String(baseTs + i * 3600000),
+			]);
+			const fetchMock = vi.fn().mockResolvedValue({
+				ok: true,
+				status: 200,
+				statusText: 'OK',
+				json: async () => ({
+					success: 1,
+					data: { candlestick: [{ ohlcv }] },
+				}),
+			});
+			globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+			await getCandles('btc_jpy', '1hour', '20240115', 100);
+
+			const calledUrls = fetchMock.mock.calls.map((call) => String(call[0]));
+			// multi-day branch は YYYYMMDD 形式のまま既存挙動
+			expect(calledUrls.some((u) => u.endsWith('/btc_jpy/candlestick/1hour/20240115'))).toBe(true);
+		});
 	});
 
 	it('複数日取得が必要な場合はバッチ取得するべき', async () => {
