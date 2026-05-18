@@ -303,6 +303,84 @@ export const rawMarginTradeHistoryResponse = {
 	],
 };
 
+// ── /spot/pairs フィクスチャ ──
+
+/**
+ * /spot/pairs ペア仕様のデフォルト値（btc_jpy 相当）。
+ * テストごとに overrides で上書きできる。
+ */
+export function mockSpotPairSpec(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+	return {
+		name: 'btc_jpy',
+		base_asset: 'btc',
+		quote_asset: 'jpy',
+		maker_fee_rate_base: '0',
+		taker_fee_rate_base: '0',
+		maker_fee_rate_quote: '-0.0002',
+		taker_fee_rate_quote: '0.0012',
+		margin_open_maker_fee_rate_quote: null,
+		margin_open_taker_fee_rate_quote: null,
+		margin_close_maker_fee_rate_quote: null,
+		margin_close_taker_fee_rate_quote: null,
+		margin_long_interest: null,
+		margin_short_interest: null,
+		margin_current_individual_ratio: null,
+		margin_current_individual_until: null,
+		margin_current_company_ratio: null,
+		margin_current_company_until: null,
+		margin_next_individual_ratio: null,
+		margin_next_individual_until: null,
+		margin_next_company_ratio: null,
+		margin_next_company_until: null,
+		unit_amount: '0.0001',
+		limit_max_amount: '1000',
+		market_max_amount: '0.5',
+		market_allowance_rate: '0.1',
+		price_digits: 0,
+		amount_digits: 8,
+		is_enabled: true,
+		stop_order: false,
+		stop_order_and_cancel: false,
+		stop_market_order: false,
+		stop_stop_order: false,
+		stop_stop_limit_order: false,
+		stop_margin_long_order: false,
+		stop_margin_short_order: false,
+		stop_buy_order: false,
+		stop_sell_order: false,
+		...overrides,
+	};
+}
+
+/**
+ * /spot/pairs レスポンス全体（btc_jpy + eth_jpy を含むデフォルト）。
+ * extraPairs で追加 / 上書きできる。
+ */
+export function mockSpotPairsResponse(extraPairs: Array<Record<string, unknown>> = []): {
+	success: 1;
+	data: { pairs: Array<Record<string, unknown>> };
+} {
+	return {
+		success: 1,
+		data: {
+			pairs: [
+				mockSpotPairSpec({ name: 'btc_jpy', base_asset: 'btc', quote_asset: 'jpy', price_digits: 0, amount_digits: 8 }),
+				mockSpotPairSpec({
+					name: 'eth_jpy',
+					base_asset: 'eth',
+					quote_asset: 'jpy',
+					unit_amount: '0.0001',
+					price_digits: 0,
+					amount_digits: 8,
+					limit_max_amount: '5000',
+					market_max_amount: '50',
+				}),
+				...extraPairs,
+			],
+		},
+	};
+}
+
 // ── ヘルパー ──
 
 /** bitbank 成功レスポンスラッパー */

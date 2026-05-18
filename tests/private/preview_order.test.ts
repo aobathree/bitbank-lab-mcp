@@ -1,24 +1,39 @@
 /**
  * preview_order ツールのユニットテスト。
  * バリデーション、確認トークン発行、プレビューメッセージ生成を検証する。
- * ネットワーク依存のトリガー価格検証はモックで対応。
+ * ネットワーク依存のトリガー価格検証 / /spot/pairs はモックで対応。
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertFail, assertOk } from '../_assertResult.js';
-import { mockBitbankSuccess } from '../fixtures/private-api.js';
+import { mockBitbankSuccess, mockSpotPairsResponse } from '../fixtures/private-api.js';
 
 const originalFetch = globalThis.fetch;
+
+/**
+ * URL に応じてレスポンスを返すデフォルトの fetch モック。
+ * - /spot/pairs → 正常な pairs 仕様（btc_jpy / eth_jpy 含む）
+ * - /ticker     → last=15000000 のティッカー
+ * - その他      → success:1 の空レスポンス
+ * 個別テストで `globalThis.fetch` を上書きすればこの mock を差し替えできる。
+ */
+function installDefaultFetchMock(extraPairs: Array<Record<string, unknown>> = []): void {
+	globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+		const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+		if (url.includes('/spot/pairs')) {
+			return new Response(JSON.stringify(mockSpotPairsResponse(extraPairs)), { status: 200 });
+		}
+		if (url.includes('/ticker')) {
+			return new Response(JSON.stringify(mockBitbankSuccess({ last: '15000000' })), { status: 200 });
+		}
+		return new Response(JSON.stringify({ success: 1, data: {} }), { status: 200 });
+	}) as unknown as typeof fetch;
+}
 
 beforeEach(() => {
 	process.env.BITBANK_API_KEY = 'test_key';
 	process.env.BITBANK_API_SECRET = 'test_secret';
-	// トリガー価格検証で ticker API を呼ぶため fetch をモック
-	globalThis.fetch = vi
-		.fn()
-		.mockResolvedValue(
-			new Response(JSON.stringify(mockBitbankSuccess({ last: '15000000' })), { status: 200 }),
-		) as unknown as typeof fetch;
+	installDefaultFetchMock();
 });
 
 afterEach(() => {
@@ -531,9 +546,13 @@ describe('preview_order', () => {
 		});
 
 		it('elicitation 対応ホストで accept されると create_order まで実行される', async () => {
-			// limit 注文はトリガー価格検証を行わないので fetch は注文 API の 1 回のみ
-			globalThis.fetch = vi.fn().mockResolvedValueOnce(
-				new Response(
+			// URL で振り分け: /spot/pairs（事前バリデーション）/ /user/spot/order（発注）
+			globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+				const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+				if (url.includes('/spot/pairs')) {
+					return new Response(JSON.stringify(mockSpotPairsResponse()), { status: 200 });
+				}
+				return new Response(
 					JSON.stringify({
 						success: 1,
 						data: {
@@ -550,8 +569,8 @@ describe('preview_order', () => {
 						},
 					}),
 					{ status: 200 },
-				),
-			) as unknown as typeof fetch;
+				);
+			}) as unknown as typeof fetch;
 
 			const elicitInput = vi.fn().mockResolvedValue({ action: 'accept', content: { confirmed: true } });
 			const fakeServer = {
@@ -578,7 +597,14 @@ describe('preview_order', () => {
 		});
 
 		it('elicitation で decline されたらキャンセル扱いで create_order は呼ばれない', async () => {
-			const fetchMock = vi.fn() as unknown as typeof fetch;
+			// /spot/pairs のみ正常レスポンス、注文 API は呼ばれない想定
+			const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+				const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+				if (url.includes('/spot/pairs')) {
+					return new Response(JSON.stringify(mockSpotPairsResponse()), { status: 200 });
+				}
+				throw new Error(`Unexpected fetch in decline test: ${url}`);
+			}) as unknown as typeof fetch;
 			globalThis.fetch = fetchMock;
 
 			const fakeServer = {
@@ -599,8 +625,295 @@ describe('preview_order', () => {
 			)) as { content: { text: string }[] };
 
 			expect(result.content[0]?.text).toContain('キャンセル');
-			// limit はトリガー価格検証も注文 API も呼ばれない
-			expect((fetchMock as unknown as { mock: { calls: unknown[] } }).mock.calls).toHaveLength(0);
+			// limit はトリガー価格検証も注文 API も呼ばれない（/spot/pairs のみ）
+			const calls = (fetchMock as unknown as { mock: { calls: Array<[unknown]> } }).mock.calls;
+			expect(calls).toHaveLength(1);
+			expect(String(calls[0]?.[0])).toContain('/spot/pairs');
+		});
+	});
+
+	// /spot/pairs に照らした事前バリデーション（60003/60004/60005/60006/70004 の早期検出）
+	describe('ペア仕様の事前バリデーション（/spot/pairs）', () => {
+		it('未対応ペアは pair エラーで弾く', async () => {
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'foo_bar',
+				amount: '0.01',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000',
+			});
+			assertFail(result);
+			expect(result.summary).toContain('未対応のペア');
+			expect(result.summary).toContain('foo_bar');
+		});
+
+		it('is_enabled=false のペアは取引停止エラー', async () => {
+			installDefaultFetchMock([
+				{
+					name: 'btc_jpy',
+					base_asset: 'btc',
+					quote_asset: 'jpy',
+					unit_amount: '0.0001',
+					limit_max_amount: '1000',
+					market_max_amount: '0.5',
+					price_digits: 0,
+					amount_digits: 8,
+					is_enabled: false,
+					stop_order: false,
+					stop_order_and_cancel: false,
+					stop_market_order: false,
+					stop_stop_order: false,
+					stop_stop_limit_order: false,
+					stop_margin_long_order: false,
+					stop_margin_short_order: false,
+					stop_buy_order: false,
+					stop_sell_order: false,
+				},
+			]);
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000',
+			});
+			assertFail(result);
+			expect(result.summary).toContain('取引停止');
+		});
+
+		it('stop_market_order=true のペアで market 注文は弾く', async () => {
+			installDefaultFetchMock([
+				{
+					name: 'btc_jpy',
+					base_asset: 'btc',
+					quote_asset: 'jpy',
+					unit_amount: '0.0001',
+					limit_max_amount: '1000',
+					market_max_amount: '0.5',
+					price_digits: 0,
+					amount_digits: 8,
+					is_enabled: true,
+					stop_order: false,
+					stop_order_and_cancel: false,
+					stop_market_order: true,
+					stop_stop_order: false,
+					stop_stop_limit_order: false,
+					stop_margin_long_order: false,
+					stop_margin_short_order: false,
+					stop_buy_order: false,
+					stop_sell_order: false,
+				},
+			]);
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'buy',
+				type: 'market',
+			});
+			assertFail(result);
+			expect(result.summary).toContain('market 注文を停止');
+		});
+
+		it('stop_buy_order=true のペアで buy は弾くが sell は通る', async () => {
+			installDefaultFetchMock([
+				{
+					name: 'btc_jpy',
+					base_asset: 'btc',
+					quote_asset: 'jpy',
+					unit_amount: '0.0001',
+					limit_max_amount: '1000',
+					market_max_amount: '0.5',
+					price_digits: 0,
+					amount_digits: 8,
+					is_enabled: true,
+					stop_order: false,
+					stop_order_and_cancel: false,
+					stop_market_order: false,
+					stop_stop_order: false,
+					stop_stop_limit_order: false,
+					stop_margin_long_order: false,
+					stop_margin_short_order: false,
+					stop_buy_order: true,
+					stop_sell_order: false,
+				},
+			]);
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const buyResult = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000',
+			});
+			assertFail(buyResult);
+			expect(buyResult.summary).toContain('buy 注文を停止');
+
+			const sellResult = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'sell',
+				type: 'limit',
+				price: '16000000',
+			});
+			assertOk(sellResult);
+		});
+
+		it('amount が最小注文数量を下回るとエラー（最小単位を含む日本語メッセージ）', async () => {
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.00001',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000',
+			});
+			assertFail(result);
+			expect(result.summary).toContain('最小注文数量');
+			expect(result.summary).toContain('0.0001');
+			expect(result.summary).toContain('BTC');
+		});
+
+		it('amount が最大注文数量（limit）を超えるとエラー', async () => {
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '99999',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000',
+			});
+			assertFail(result);
+			expect(result.summary).toContain('最大注文数量');
+		});
+
+		it('amount の小数桁が許容上限を超えるとエラー', async () => {
+			installDefaultFetchMock([
+				{
+					name: 'btc_jpy',
+					base_asset: 'btc',
+					quote_asset: 'jpy',
+					unit_amount: '0.0001',
+					limit_max_amount: '1000',
+					market_max_amount: '0.5',
+					price_digits: 0,
+					amount_digits: 4,
+					is_enabled: true,
+					stop_order: false,
+					stop_order_and_cancel: false,
+					stop_market_order: false,
+					stop_stop_order: false,
+					stop_stop_limit_order: false,
+					stop_margin_long_order: false,
+					stop_margin_short_order: false,
+					stop_buy_order: false,
+					stop_sell_order: false,
+				},
+			]);
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.123456',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000',
+			});
+			assertFail(result);
+			expect(result.summary).toContain('amount の小数桁数');
+		});
+
+		it('price の小数桁が許容上限を超えるとエラー（price_digits=0 で 14000000.5）', async () => {
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000.5',
+			});
+			assertFail(result);
+			expect(result.summary).toContain('price の小数桁数');
+		});
+
+		it('trigger_price の小数桁が許容上限を超えるとエラー', async () => {
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'sell',
+				type: 'stop',
+				trigger_price: '13000000.25',
+			});
+			assertFail(result);
+			expect(result.summary).toContain('trigger_price の小数桁数');
+		});
+
+		it('/spot/pairs 取得失敗時は warning にフォールバックして発注プレビューを継続する', async () => {
+			// /spot/pairs だけ 500 を返し、ticker は正常
+			globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+				const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+				if (url.includes('/spot/pairs')) {
+					return new Response('boom', { status: 500 });
+				}
+				if (url.includes('/ticker')) {
+					return new Response(JSON.stringify(mockBitbankSuccess({ last: '15000000' })), { status: 200 });
+				}
+				return new Response(JSON.stringify({ success: 1, data: {} }), { status: 200 });
+			}) as unknown as typeof fetch;
+
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000',
+			});
+			assertOk(result);
+			// プレビューは成立し confirmation_token が発行される
+			expect(result.data.confirmation_token).toBeTypeOf('string');
+			// warning が meta と summary 双方に出る
+			expect(result.meta.warnings).toBeDefined();
+			expect(result.meta.warnings?.[0]).toContain('/spot/pairs');
+			expect(result.summary).toContain('スキップ');
+		});
+
+		it('/spot/pairs ネットワークエラー時も warning でプレビューを継続する', async () => {
+			globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+				const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+				if (url.includes('/spot/pairs')) {
+					throw new TypeError('fetch failed');
+				}
+				if (url.includes('/ticker')) {
+					return new Response(JSON.stringify(mockBitbankSuccess({ last: '15000000' })), { status: 200 });
+				}
+				return new Response(JSON.stringify({ success: 1, data: {} }), { status: 200 });
+			}) as unknown as typeof fetch;
+
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'buy',
+				type: 'market',
+			});
+			assertOk(result);
+			expect(result.meta.warnings?.[0]).toContain('/spot/pairs');
+		});
+
+		it('正常時は warnings 無し（meta に warnings キーを含めない）', async () => {
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000',
+			});
+			assertOk(result);
+			expect(result.meta.warnings).toBeUndefined();
 		});
 	});
 });

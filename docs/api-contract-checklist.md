@@ -550,12 +550,44 @@
 
 | 項目 | 内容 |
 |---|---|
-| 実装 | 🟡 部分的 |
+| 実装ファイル | `lib/pairs.ts`（`fetchPairsSpec` / `validateOrderConstraints`） |
+| 利用箇所 | `tools/private/preview_order.ts` の事前バリデーション |
+| テスト | `tests/lib/pairs.test.ts`（49 ケース）/ `tests/private/preview_order.test.ts` の「ペア仕様の事前バリデーション」describe |
+| キャッシュ | TtlCache（TTL 1h、`BITBANK_SPOT_PAIRS_TTL_MS` で上書き可） |
+| 状態 | ✅ |
 
-**注記**: `BITBANK_PAIRS_MODE=auto` で `tickers_jpy` を自動取得して pair list 化しているため、JPY ペアだけは間接的に動的化。`/spot/pairs` を直接叩けば最小数量 / 価格刻み / 手数料率なども取れるが現状未利用。
+**用途**: `BITBANK_PAIRS_MODE=auto` の `tickers_jpy` フォールバック（JPY ペアの動的化）に加え、`/spot/pairs` 全体を取得して以下の事前バリデーションを実施する。bitbank 側で 60003 / 60004 / 60005 / 60006 / 70004 等のエラーになる前に分かりやすいメッセージで止める。
 
-**TODO**:
-- 最小注文数量 / 価格刻みを `/spot/pairs` から取得し、`preview_order` での事前バリデーションに活用すれば bitbank 側で 60003 / 60004 / 60005 / 60006 になる前にユーザーに知らせられる。
+**レスポンスフィールド対応:**
+
+| 公式フィールド | 型 | preview_order での用途 |
+|---|---|---|
+| `name` | string | ペア存在確認 |
+| `base_asset` | string | エラーメッセージの単位表示（例: BTC） |
+| `unit_amount` | string | 最小注文数量チェック |
+| `limit_max_amount` | string | limit / stop_limit の最大数量チェック |
+| `market_max_amount` | string | market / stop の最大数量チェック |
+| `price_digits` | number | price / trigger_price の小数桁数チェック |
+| `amount_digits` | number | amount の小数桁数チェック |
+| `is_enabled` | boolean | 取引停止検出 |
+| `stop_order` | boolean | 新規注文停止検出 |
+| `stop_order_and_cancel` | boolean | 注文・キャンセル両方停止検出（優先） |
+| `stop_market_order` | boolean | market 注文停止検出 |
+| `stop_stop_order` | boolean | stop 注文停止検出 |
+| `stop_stop_limit_order` | boolean | stop_limit 注文停止検出 |
+| `stop_margin_long_order` | boolean | 信用ロング新規建て停止検出 |
+| `stop_margin_short_order` | boolean | 信用ショート新規建て停止検出 |
+| `stop_buy_order` | boolean | buy 注文停止検出 |
+| `stop_sell_order` | boolean | sell 注文停止検出 |
+| `maker_fee_rate_*` / `taker_fee_rate_*` / `margin_*` | string \| null | 未使用（手数料・金利は当面ツール出力に反映していない） |
+| `market_allowance_rate` | string | 未使用（市場価格許容率） |
+
+**失敗時の挙動（重要）**:
+- `/spot/pairs` の取得失敗（HTTP 5xx / タイムアウト / ネットワークエラー / `success:0`）は **warning に留め、プレビュー処理を継続**する設計。
+  - 理由: 仕様取得が落ちる度に発注が完全停止すると UX が著しく悪化するため。
+  - 結果: bitbank 本 API 側で同等のエラーコード（60003 / 60004 / 60005 / 60006 / 70004）が返るため、最終的な保護は失われない。
+  - warning は `meta.warnings: string[]` と summary 末尾の `⚠️` ブロックに記録され、ユーザー・LLM の双方が検出可能。
+- 詳細は `docs/private-api.md`「ペア仕様の事前バリデーション」節を参照。
 
 ### 3.21 GET `/v1/user/subscribe` (Private Stream トークン)
 
@@ -619,7 +651,7 @@
 ### Medium（機能拡張・将来の堅牢性）
 
 - [ ] **`circuit_break_info` エンドポイントの実装** — market order や depth 解釈と密接に関連。最低でも `mode` / `fee_type` / `reopen_timestamp` を取得できるツールを追加。
-- [ ] **`/spot/pairs` を取り込み `preview_order` で最小注文数量 / 価格刻みバリデーション** — 60003 / 60004 / 60005 / 60006 を未然に防止。
+- [x] **`/spot/pairs` を取り込み `preview_order` で最小注文数量 / 価格刻みバリデーション** — ✅ `lib/pairs.ts` に `fetchPairsSpec` / `validateOrderConstraints` を実装。`preview_order` で pair 存在・取引停止フラグ（`is_enabled` / `stop_order` / `stop_market_order` / `stop_stop_order` / `stop_stop_limit_order` / `stop_buy_order` / `stop_sell_order` / `stop_margin_long_order` / `stop_margin_short_order`）・最小数量（`unit_amount`）・最大数量（`limit_max_amount` / `market_max_amount`）・桁数（`amount_digits` / `price_digits`）を検証。API 取得失敗時は warning へフォールバックして発注プレビューを継続（詳細は §3.20）。
 - [ ] **`/spot/status` の取り込み** — 取引可否を事前確認できる。
 - [ ] **`assets` レスポンスに `stop_deposit` / `stop_withdrawal` / `collateral_ratio` を含める** — ユーザーへの情報量増加。
 - [ ] **`TradeItemSchema`（現物）に `position_side` / `profit_loss` / `interest` を optional 追加** — 現物⇄信用混在応答への堅牢性。

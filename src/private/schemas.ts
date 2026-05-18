@@ -699,6 +699,8 @@ export const PreviewOrderDataSchema = z.object({
 
 export const PreviewOrderMetaSchema = z.object({
 	action: z.literal('create_order'),
+	/** 事前バリデーションで発生した警告（例: /spot/pairs 取得失敗で最小数量・桁数チェックを省略） */
+	warnings: z.array(z.string()).optional(),
 });
 
 export const PreviewOrderOutputSchema = z.union([

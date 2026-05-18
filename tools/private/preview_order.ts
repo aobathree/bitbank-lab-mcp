@@ -8,6 +8,7 @@
 import { toNum } from '../../lib/conversions.js';
 import { formatPair, formatPrice } from '../../lib/formatter.js';
 import { BITBANK_API_BASE, fetchJson } from '../../lib/http.js';
+import { fetchPairsSpec, validateOrderConstraints } from '../../lib/pairs.js';
 import { fail, ok, toStructured } from '../../lib/result.js';
 import { generateToken } from '../../src/private/confirmation.js';
 import { PreviewOrderInputSchema, PreviewOrderOutputSchema } from '../../src/private/schemas.js';
@@ -114,6 +115,30 @@ export default async function previewOrder(args: {
 		return PreviewOrderOutputSchema.parse(fail('trigger_price は正の数値を指定してください', 'validation_error'));
 	}
 
+	// /spot/pairs に照らした事前バリデーション（最小数量・桁数・取引停止フラグ）
+	// API 取得失敗時は warning に留めて発注を継続する（後段の bitbank 側で必ず検証されるため）。
+	// 失敗時の挙動は docs/private-api.md「ペア仕様の事前バリデーション」節を参照。
+	const warnings: string[] = [];
+	try {
+		const pairsMap = await fetchPairsSpec();
+		const spec = pairsMap.get(pair.toLowerCase());
+		const violation = validateOrderConstraints(spec, {
+			pair,
+			type,
+			side,
+			amount,
+			price,
+			trigger_price,
+			position_side,
+		});
+		if (violation) {
+			return PreviewOrderOutputSchema.parse(fail(violation.message, 'validation_error'));
+		}
+	} catch (err: unknown) {
+		const msg = err instanceof Error ? err.message : String(err);
+		warnings.push(`ペア仕様（/spot/pairs）取得失敗のため最小数量・桁数チェックをスキップしました: ${msg}`);
+	}
+
 	// stop / stop_limit: トリガー価格の妥当性チェック
 	if ((type === 'stop' || type === 'stop_limit') && trigger_price) {
 		const triggerError = await validateTriggerPrice(pair, side, Number(trigger_price));
@@ -167,6 +192,12 @@ export default async function previewOrder(args: {
 		lines.push('');
 		lines.push('⚠️ 信用取引です。損失が保証金を超える可能性があります。');
 	}
+	if (warnings.length > 0) {
+		lines.push('');
+		for (const w of warnings) {
+			lines.push(`⚠️ ${w}`);
+		}
+	}
 	lines.push('');
 	lines.push('⚠️ この注文はユーザーの最終確認（ホスト UI または elicitation）を経るまで発注されません。');
 
@@ -178,8 +209,11 @@ export default async function previewOrder(args: {
 	if (post_only) preview.post_only = post_only;
 	if (position_side) preview.position_side = position_side;
 
+	const meta: { action: 'create_order'; warnings?: string[] } = { action: 'create_order' as const };
+	if (warnings.length > 0) meta.warnings = warnings;
+
 	return PreviewOrderOutputSchema.parse(
-		ok(summary, { confirmation_token: token, expires_at: expiresAt, preview }, { action: 'create_order' as const }),
+		ok(summary, { confirmation_token: token, expires_at: expiresAt, preview }, meta),
 	);
 }
 

@@ -86,6 +86,35 @@ npx -y bitbank-lab-mcp
 - Zod スキーマによるパラメータの型・範囲チェック
 - 注文タイプ別の必須パラメータ検証（limit → price 必須 等）
 - stop 注文のトリガー価格妥当性チェック（即時発動の防止）
+- `/spot/pairs` に照らした事前バリデーション（次節参照）
+
+### ペア仕様の事前バリデーション（`/spot/pairs`）
+
+`preview_order` は bitbank の公式エンドポイント `GET /spot/pairs` から取得したペア仕様に照らして、発注前に以下を検証する。bitbank 側で 60003 / 60004 / 60005 / 60006 / 70004 等のエラーになる前に分かりやすい日本語メッセージで止める。
+
+| チェック項目 | 失敗条件 | bitbank で発生し得るエラー |
+|---|---|---|
+| ペア存在 | `/spot/pairs` に該当 `pair` が無い | 30000 番台 |
+| 取引可否 | `is_enabled=false` | 70004 |
+| 注文停止フラグ | `stop_order` / `stop_order_and_cancel` | 70004 系 |
+| タイプ別停止 | `stop_market_order` / `stop_stop_order` / `stop_stop_limit_order` | 70004 系 |
+| サイド別停止 | `stop_buy_order` / `stop_sell_order` | 70004 系 |
+| 信用新規建て停止 | `stop_margin_long_order`（buy+long） / `stop_margin_short_order`（sell+short） | 70004 系 |
+| 最小注文数量 | `amount < unit_amount` | 60003 / 60004 |
+| 最大注文数量 | `amount > limit_max_amount`（limit / stop_limit）/ `market_max_amount`（market / stop） | 60011 |
+| 数量精度 | `amount` の有効小数桁数 > `amount_digits` | 60005 / 60006 |
+| 価格精度 | `price` / `trigger_price` の有効小数桁数 > `price_digits` | 60005 / 60006 |
+
+**キャッシュ**:
+- TTL はデフォルト 60 分。`BITBANK_SPOT_PAIRS_TTL_MS` 環境変数で上書き可能（ミリ秒）。
+- ペア仕様は頻繁には変わらないため長めの TTL を採用している。
+
+**API 取得失敗時の挙動（重要）**:
+- `/spot/pairs` の取得が失敗した場合（HTTP 5xx / タイムアウト / ネットワークエラー / `success:0`）は、**プレビュー処理を完全停止せず warning に留めて発注を継続**する設計。
+  - 理由: 仕様取得が一時的に落ちる度に全ユーザーが発注できなくなると UX が著しく悪化する。
+  - 代替の保護: bitbank 本 API 側で同等のエラーコード（60003 / 60004 / 60005 / 60006 / 70004 等）が必ず返るため、最終的な保護は失われない。HITL 確認も維持される。
+  - 検出可能性: warning は `meta.warnings: string[]` と summary 末尾の `⚠️` ブロックに記録され、ユーザー・LLM の双方から確認できる。
+- 一方で、`/spot/pairs` の取得が**成功**して仕様違反が検出された場合は、`validation_error` として確実にプレビューを停止する（warning ではない）。
 
 ### 確認フロー（HITL: Human-in-the-Loop）
 
@@ -180,7 +209,7 @@ bitbank 公式 REST API spec の `POST /v1/user/spot/order` は上記に加え `
 ## 制限事項
 
 - bitbank API のレート制限に従う（429 エラー時は自動リトライ）
-- 注文の最小/最大数量は bitbank の仕様に準拠
+- 注文の最小/最大数量・価格刻みは `/spot/pairs` の仕様に準拠（`preview_order` で事前検証。失敗時の挙動は「ペア仕様の事前バリデーション」節を参照）
 - 信用取引のリアルタイム通知（ストリーム）は未対応
 
 ## トラブルシューティング
