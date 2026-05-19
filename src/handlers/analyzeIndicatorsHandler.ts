@@ -236,8 +236,18 @@ export function buildIndicatorsText(input: BuildIndicatorsTextInput): string {
 	lines.push('');
 	// Ichimoku
 	lines.push('【一目均衡表】');
+	// 'unknown' は ichi_series 不足等でデータが取れない場合。'中立' に丸めるとデータ欠落が
+	// 「雲の中（中立）」として誤って表示されてしまうので、明示的に「データ不足」と出す。
 	lines.push(
-		`  現在位置: ${cloudPos === 'below_cloud' ? '雲の下 → 弱気' : cloudPos === 'above_cloud' ? '雲の上 → 強気' : '雲の中 → 中立'}`,
+		`  現在位置: ${
+			cloudPos === 'below_cloud'
+				? '雲の下 → 弱気'
+				: cloudPos === 'above_cloud'
+					? '雲の上 → 強気'
+					: cloudPos === 'in_cloud'
+						? '雲の中 → 中立'
+						: 'n/a（雲データ不足）'
+		}`,
 	);
 	lines.push(`  転換線: ${formatPriceJPY(tenkan)} (${vsCurPct(tenkan)}) ${formatTrendSymbol(ichimokuConvSlope)}`);
 	lines.push(`  基準線: ${formatPriceJPY(kijun)} (${vsCurPct(kijun)}) ${formatTrendSymbol(ichimokuBaseSlope)}`);
