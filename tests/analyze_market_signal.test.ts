@@ -455,6 +455,52 @@ describe('analyze_market_signal', () => {
 		expect(res.data.confidenceReason).toContain('RSI_14');
 	});
 
+	it('SMA_25 が null のとき confidence は low 固定（smaTrendFactor の入力が欠ける）', async () => {
+		mockedGetFlowMetrics.mockResolvedValueOnce(asMockResult(flowOk(0.8, [0, 10, 20, 40, 60, 80, 100, 120, 140, 160])));
+		mockedGetVolatilityMetrics.mockResolvedValueOnce(asMockResult(volOk(0.3)));
+		mockedAnalyzeIndicators.mockResolvedValueOnce(
+			asMockResult(
+				indicatorsOk({
+					close: 120,
+					rsi: 65,
+					sma25: null,
+					sma75: 110,
+					sma200: 100,
+					trend: 'uptrend',
+				}),
+			),
+		);
+
+		const res = await analyzeMarketSignal('btc_jpy');
+		assertOk(res);
+		expect(res.data.confidence).toBe('low');
+		expect(res.data.confidenceReason).toContain('SMA_25');
+	});
+
+	it('latestClose が null のとき confidence は low 固定（normalized が空）', async () => {
+		mockedGetFlowMetrics.mockResolvedValueOnce(asMockResult(flowOk(0.8, [0, 10, 20, 40, 60, 80, 100, 120, 140, 160])));
+		mockedGetVolatilityMetrics.mockResolvedValueOnce(asMockResult(volOk(0.3)));
+		// normalizedCount=0 → indRes.data.normalized=[] → at(-1)?.close=undefined → latestClose null 扱い
+		mockedAnalyzeIndicators.mockResolvedValueOnce(
+			asMockResult(
+				indicatorsOk({
+					close: 120,
+					rsi: 65,
+					sma25: 115,
+					sma75: 110,
+					sma200: 100,
+					normalizedCount: 0,
+					trend: 'uptrend',
+				}),
+			),
+		);
+
+		const res = await analyzeMarketSignal('btc_jpy');
+		assertOk(res);
+		expect(res.data.confidence).toBe('low');
+		expect(res.data.confidenceReason).toContain('latestClose');
+	});
+
 	it('上流 warning が全く無い場合は meta.warning / meta.warnings が出ない', async () => {
 		mockedGetFlowMetrics.mockResolvedValueOnce(asMockResult(flowOk(0.5, [0, 0, 0, 0, 0, 0, 0, 0, 0, 0])));
 		mockedGetVolatilityMetrics.mockResolvedValueOnce(asMockResult(volOk(0.5)));

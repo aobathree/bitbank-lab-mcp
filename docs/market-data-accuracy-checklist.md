@@ -306,7 +306,7 @@ handler が独自に `content` テキストを組む場合でも、tool 層の `
 `JSON.stringify(data)` を含める場合も **JSON より前** に warning 行を置く
 （`.claude/rules/tools.md` の handler チェックリスト参照）。
 
-### 9.4 `confidence` の降格契約 🟡
+### 9.4 `confidence` の降格契約 ✅
 
 `analyze_market_signal` の `confidence` レベル（`high` / `medium` / `low`）は
 データ品質に応じて降格する:
@@ -316,15 +316,23 @@ handler が独自に `content` テキストを組む場合でも、tool 層の `
 | 取得層 `meta.warning` を上流のいずれかが持っている | `confidence` は **最大 `medium`**（`high` にしない） |
 | 主要要素のいずれかが null / データ不足で寄与計算不能 | `confidence = low` 固定 |
 
-主要要素の定義（`tools/analyze_market_signal.ts:324` の重み）:
+主要要素の定義（`tools/analyze_market_signal.ts:481-489` の `missingCoreFactors`）:
 
-- `smaTrend`（重み 35%）: `latestClose` / `sma25` / `sma75` のいずれかが null の場合
-- `momentum`（重み 30%）: `rsi` が null の場合
+- `latestClose`: 最新終値が null
+- `SMA_200`: `sma200` が null
+- `SMA_75`: `sma75` が null
+- `SMA_25`: `sma25` が null
+- `RSI_14`: `rsi` が null
 
-実装位置: `tools/analyze_market_signal.ts:359-382`（`calculateConfidence`）。
+`smaTrendFactor`（重み 35%）の寄与計算は `latestClose` / `sma25` / `sma75` の
+3 つすべてを必要とする（`tools/analyze_market_signal.ts:287` のガード）。
+`sma200` は alignment bonus に加えて `dist / 0.05` 補正項にも使うため core 扱い。
+`momentumFactor`（重み 30%）は `rsi` が null の場合に 0 になる。
+いずれかが欠損していると `missingCoreFactors` に積まれ、`calculateConfidence` 冒頭で
+`low` 固定 + 理由文に列挙される。
 
-🟡 状態: 現在の `calculateConfidence` は寄与値の符号一致のみで判定しており、
-データ品質を考慮していない。タスクB でこの契約に合わせる。
+実装位置: `tools/analyze_market_signal.ts:363-401`（`calculateConfidence` 本体）
+／ `tools/analyze_market_signal.ts:479-489`（`missingCoreFactors` の組み立てと呼び出し）。
 
 ---
 

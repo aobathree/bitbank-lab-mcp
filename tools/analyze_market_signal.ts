@@ -476,9 +476,13 @@ export default async function analyzeMarketSignal(pair: string = 'btc_jpy', opts
 
 		// 主要要素（重み 35% smaTrend、30% momentum）に必要なデータが揃っているかを判定。
 		// 欠損があると寄与計算が無効化されるので、confidence を low 固定にする（§9.4）。
+		// smaTrend は latestClose / sma25 / sma75 すべてを要求する（L287 のガード参照）。
+		// いずれかが null なら smaTrendFactor=0 になり寄与 35% が黙って消えるので core 扱い。
 		const missingCoreFactors: string[] = [];
+		if (latestClose == null) missingCoreFactors.push('latestClose');
 		if (sma200 == null) missingCoreFactors.push('SMA_200');
 		if (sma75 == null) missingCoreFactors.push('SMA_75');
+		if (sma25 == null) missingCoreFactors.push('SMA_25');
 		if (rsi == null) missingCoreFactors.push('RSI_14');
 		const confidence = calculateConfidence(contributionsData, score, {
 			hasUpstreamWarning: !!upstreamWarning,
