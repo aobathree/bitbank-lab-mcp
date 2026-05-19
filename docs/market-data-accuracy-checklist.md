@@ -396,3 +396,13 @@ fixture ベースで検証する。
 | #493 | §8.3 / §8.4 の golden テスト追加（Bollinger / Stochastic） | ✅ Merged |
 | #494 | §8 をフェーズ4 merge 状態に同期 | ✅ Merged |
 | #495 | §8.13 ライブ spot check 手順 + 初回実施記録 | ✅ Merged |
+
+---
+
+## フェーズ5 実施履歴
+
+| PR | 内容 | 状態 |
+|---|---|---|
+| #496 | §9（総合シグナルとデータ品質）+ §パターン検出 を契約として追加 | ✅ Merged |
+| #497 | `analyze_market_signal` 上流 warning 集約 + confidence 降格 | ✅ Merged |
+| #498 | パターン検出の横断不変条件テスト追加 | ✅ Merged |
