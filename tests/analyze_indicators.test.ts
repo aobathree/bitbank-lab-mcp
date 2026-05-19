@@ -716,4 +716,75 @@ describe('padSeriesLengths: createChartData 経由で検証', () => {
 			expect((indicators.SMA_25 as unknown[]).length).toBe(candlesLen);
 		}
 	});
+
+	// 契約: 戻り値の全系列の長さが normalized (chart.candles) と一致する。
+	// padSeriesLengths が対象外とする macd_series も、計算時点で normalized から
+	// 直接生成されるため一致する。落とすと描画層で index ずれが起きる。
+	// 参照: docs/market-data-accuracy-checklist.md §8.5, §8.12
+	it('normalized.length と chart.indicators の各系列長が一致する（macd_series 含む）', async () => {
+		// 60 行: SMA_25/EMA_26 等の主要指標が有効になる十分なバー数
+		const rows = makeOhlcvRows(60);
+		globalThis.fetch = vi.fn().mockResolvedValue({
+			ok: true,
+			status: 200,
+			statusText: 'OK',
+			json: async () => ({ success: 1, data: { candlestick: [{ type: '1day', ohlcv: rows }] } }),
+		}) as unknown as typeof fetch;
+
+		const res = await analyzeIndicators('btc_jpy', '1day', null);
+		assertOk(res);
+
+		const candlesLen = res.data.chart.candles.length;
+		const indicators = res.data.chart.indicators as Record<string, unknown>;
+
+		// padSeriesLengths 対象キー（全て candles と同じ長さに揃えられる）
+		const paddedKeys = [
+			'SMA_5',
+			'SMA_20',
+			'SMA_25',
+			'SMA_50',
+			'SMA_75',
+			'SMA_200',
+			'EMA_12',
+			'EMA_26',
+			'EMA_50',
+			'EMA_200',
+			'BB_upper',
+			'BB_middle',
+			'BB_lower',
+			'BB1_upper',
+			'BB1_middle',
+			'BB1_lower',
+			'BB2_upper',
+			'BB2_middle',
+			'BB2_lower',
+			'BB3_upper',
+			'BB3_middle',
+			'BB3_lower',
+			'ICHI_tenkan',
+			'ICHI_kijun',
+			'ICHI_spanA',
+			'ICHI_spanB',
+			'ICHI_chikou',
+			'RSI_14_series',
+			'stoch_k_series',
+			'stoch_d_series',
+		];
+		for (const key of paddedKeys) {
+			expect(Array.isArray(indicators[key])).toBe(true);
+			expect((indicators[key] as unknown[]).length).toBe(candlesLen);
+		}
+
+		// padSeriesLengths 対象外の macd_series も normalized から直接計算されるため一致する
+		const macdSeries = indicators.macd_series as { line: unknown[]; signal: unknown[]; hist: unknown[] } | undefined;
+		expect(macdSeries).toBeDefined();
+		if (macdSeries) {
+			expect(Array.isArray(macdSeries.line)).toBe(true);
+			expect(Array.isArray(macdSeries.signal)).toBe(true);
+			expect(Array.isArray(macdSeries.hist)).toBe(true);
+			expect(macdSeries.line.length).toBe(candlesLen);
+			expect(macdSeries.signal.length).toBe(candlesLen);
+			expect(macdSeries.hist.length).toBe(candlesLen);
+		}
+	});
 });

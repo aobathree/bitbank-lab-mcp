@@ -243,6 +243,53 @@ describe('ema', () => {
 		expect(result[7]).toBeCloseTo(5, 10);
 		expect(result[8]).toBeCloseTo(6, 10);
 	});
+
+	// 参照実装: pandas-ta.ema(length=12) / ema(length=26)（SMA シード + k=2/(period+1)）
+	// 入力配列: 40 本の合成終値（前半上昇 → 後半下降）。
+	// EMA は SMA(period) を index = period-1 にシードし、以降 `next = price*k + prev*(1-k)`。
+	// 参照: docs/market-data-accuracy-checklist.md §8.1
+	const EMA_GOLDEN_CLOSES = [
+		100.0, 101.5, 102.3, 103.1, 102.8, 104.2, 105.0, 104.6, 103.9, 105.5, 106.8, 107.2, 106.5, 108.0, 109.3, 108.7,
+		110.1, 111.4, 110.8, 112.2, 113.5, 112.9, 114.3, 115.6, 114.0, 113.2, 112.5, 111.8, 110.5, 109.7, 108.4, 107.6,
+		106.3, 105.5, 104.2, 103.4, 102.1, 101.3, 100.0, 99.2,
+	];
+
+	it('golden: EMA(12) 数値固定（pandas-ta.ema(length=12) 参照、ε=1e-4）', () => {
+		const result = ema(EMA_GOLDEN_CLOSES, 12);
+		expect(result).toHaveLength(40);
+		// 先頭 11 個は NaN（先頭 period-1=11 個）
+		for (let i = 0; i < 11; i++) {
+			expect(result[i]).toBeNaN();
+		}
+		// シードは SMA(12) の値そのもの
+		const seedSma12 = EMA_GOLDEN_CLOSES.slice(0, 12).reduce((a, b) => a + b, 0) / 12;
+		expect(result[11]).toBeCloseTo(seedSma12, 10);
+		// pandas-ta 出力値（SMA シード + k=2/(12+1)≈0.15385 の漸化式）
+		expect(result[11]).toBeCloseTo(103.9083, 4);
+		expect(result[12]).toBeCloseTo(104.3071, 4); // 102.8*k + 103.9083*(1-k)
+		expect(result[15]).toBeCloseTo(106.0396, 4);
+		expect(result[20]).toBeCloseTo(109.3335, 4);
+		expect(result[25]).toBeCloseTo(111.9702, 4);
+		expect(result[35]).toBeCloseTo(107.6289, 4);
+	});
+
+	it('golden: EMA(26) 数値固定（pandas-ta.ema(length=26) 参照、ε=1e-4）', () => {
+		const result = ema(EMA_GOLDEN_CLOSES, 26);
+		expect(result).toHaveLength(40);
+		// 先頭 25 個は NaN
+		for (let i = 0; i < 25; i++) {
+			expect(result[i]).toBeNaN();
+		}
+		// シードは SMA(26)
+		const seedSma26 = EMA_GOLDEN_CLOSES.slice(0, 26).reduce((a, b) => a + b, 0) / 26;
+		expect(result[25]).toBeCloseTo(seedSma26, 10);
+		// pandas-ta 出力値（SMA シード + k=2/(26+1)≈0.07407 の漸化式）
+		expect(result[25]).toBeCloseTo(107.9769, 4);
+		expect(result[26]).toBeCloseTo(108.312, 3); // 113.2*k + 107.9769*(1-k)
+		expect(result[30]).toBeCloseTo(108.7577, 4);
+		expect(result[35]).toBeCloseTo(107.6338, 4);
+		expect(result[39]).toBeCloseTo(105.7579, 4);
+	});
 });
 
 // --- RSI ---
@@ -338,6 +385,31 @@ describe('rsi', () => {
 			expect(result[i]).toBeGreaterThanOrEqual(0);
 			expect(result[i]).toBeLessThanOrEqual(100);
 		}
+	});
+
+	// 参照実装: pandas-ta.rsi(length=14)（Wilder's Smoothing / RMA）
+	// 入力配列: 33 本の合成終値。前半は緩やかな上昇、後半は下降に転じるよう設計。
+	// 期待値は同一スペックで実装したクリーンルーム参照（Wilder の漸化式そのまま）で生成。
+	// 既存 JS 実装と Wilder RSI 仕様は完全一致するため、許容誤差 ε=1e-4 で固定する。
+	// 参照: docs/market-data-accuracy-checklist.md §8.2
+	it('golden: RSI(14) 数値固定（pandas-ta.rsi(length=14) 参照、ε=1e-4）', () => {
+		const closes = [
+			44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.1, 45.42, 45.84, 46.08, 45.89, 46.03, 45.61, 46.28, 46.28, 46.0,
+			46.03, 46.41, 46.22, 45.64, 46.21, 46.25, 45.71, 46.45, 45.78, 45.35, 44.03, 44.18, 44.22, 44.57, 43.42, 42.66,
+			43.13,
+		];
+		const result = rsi(closes, 14);
+		expect(result).toHaveLength(33);
+		// 先頭 14 個（period 個）は NaN
+		for (let i = 0; i < 14; i++) {
+			expect(result[i]).toBeNaN();
+		}
+		// pandas-ta 出力値（Wilder RSI 仕様）
+		expect(result[14]).toBeCloseTo(70.4641, 4);
+		expect(result[15]).toBeCloseTo(66.2496, 4);
+		expect(result[20]).toBeCloseTo(62.8807, 4);
+		expect(result[25]).toBeCloseTo(50.3868, 4);
+		expect(result[32]).toBeCloseTo(37.7888, 4);
 	});
 });
 
@@ -515,6 +587,81 @@ describe('macd', () => {
 		for (const v of result.signal) expect(v).toBeNaN();
 		for (const v of result.hist) expect(v).toBeNaN();
 	});
+
+	// 参照実装: pandas-ta.macd(fast=12, slow=26, signal=9)（SMA シード + EMA(9) on line）
+	// 入力配列: 50 本の合成終値。最初の 33 本は RSI golden と同じ Wilder 系列、
+	// 末尾 17 本を追加して signal の有効区間 (index >= 33) も確実に覆う。
+	// 参照: docs/market-data-accuracy-checklist.md §8.11
+	const MACD_GOLDEN_CLOSES = [
+		44.34, 44.09, 44.15, 43.61, 44.33, 44.83, 45.1, 45.42, 45.84, 46.08, 45.89, 46.03, 45.61, 46.28, 46.28, 46.0, 46.03,
+		46.41, 46.22, 45.64, 46.21, 46.25, 45.71, 46.45, 45.78, 45.35, 44.03, 44.18, 44.22, 44.57, 43.42, 42.66, 43.13,
+		43.84, 44.22, 44.57, 44.84, 45.1, 45.42, 45.84, 45.89, 46.03, 45.61, 46.28, 46.28, 46.0, 46.03, 46.41, 46.22, 45.64,
+	];
+
+	it('golden: MACD(12,26,9) line/signal/hist 数値固定（pandas-ta.macd 参照、ε=1e-4）', () => {
+		const result = macd(MACD_GOLDEN_CLOSES, 12, 26, 9);
+		expect(result.line).toHaveLength(50);
+		expect(result.signal).toHaveLength(50);
+		expect(result.hist).toHaveLength(50);
+
+		// line の有効先頭 index は 25（EMA(26) の出始め = period-1）
+		const lineFirstFinite = result.line.findIndex((v) => Number.isFinite(v));
+		expect(lineFirstFinite).toBe(25);
+		for (let i = 0; i < 25; i++) {
+			expect(result.line[i]).toBeNaN();
+		}
+
+		// signal の有効先頭 index は 33（line 有限値の先頭から 9 本目: 25 + 9 - 1）
+		const signalFirstFinite = result.signal.findIndex((v) => Number.isFinite(v));
+		expect(signalFirstFinite).toBe(33);
+		for (let i = 0; i < 33; i++) {
+			expect(result.signal[i]).toBeNaN();
+		}
+
+		// pandas-ta 出力値（line = EMA(12) - EMA(26)）
+		expect(result.line[25]).toBeCloseTo(0.3067, 4);
+		expect(result.line[33]).toBeCloseTo(-0.475, 3);
+		expect(result.line[40]).toBeCloseTo(0.0641, 4);
+		expect(result.line[49]).toBeCloseTo(0.328, 3);
+
+		// pandas-ta 出力値（signal = EMA(9, line 有限部分)）
+		expect(result.signal[33]).toBeCloseTo(-0.1454, 4);
+		expect(result.signal[40]).toBeCloseTo(-0.1341, 4);
+		expect(result.signal[49]).toBeCloseTo(0.257, 3);
+
+		// 恒等式: hist[i] = line[i] - signal[i]（line/signal が共に有限な全 index で成立）
+		for (let i = 0; i < 50; i++) {
+			if (Number.isFinite(result.line[i]) && Number.isFinite(result.signal[i])) {
+				expect(result.hist[i]).toBeCloseTo(result.line[i] - result.signal[i], 10);
+			} else {
+				expect(result.hist[i]).toBeNaN();
+			}
+		}
+	});
+
+	// 契約: line の先頭のみ NaN、途中は全て有限な入力では、
+	// signal[i] の有効 index が line[i] の有効 index 起点で 9 本目から開始する。
+	// 途中に NaN が混入したケースは契約外（docs §8.11）。
+	it('macd index 防御: 先頭のみ NaN・途中は全て有限な line で signal が line の有限 index と整合', () => {
+		const result = macd(MACD_GOLDEN_CLOSES, 12, 26, 9);
+
+		const lineFirstFinite = result.line.findIndex((v) => Number.isFinite(v));
+		// line の先頭 NaN 区間を除いて全て有限
+		for (let i = lineFirstFinite; i < result.line.length; i++) {
+			expect(Number.isFinite(result.line[i])).toBe(true);
+		}
+
+		// signal は lineFirstFinite + 8 (= 9 EMA の seed 位置) から有限
+		const expectedSignalFirst = lineFirstFinite + (9 - 1);
+		const signalFirstFinite = result.signal.findIndex((v) => Number.isFinite(v));
+		expect(signalFirstFinite).toBe(expectedSignalFirst);
+
+		// signal[i] は line[i] と同じ index に書き戻されている（圧縮されていない）
+		for (let i = signalFirstFinite; i < result.signal.length; i++) {
+			expect(Number.isFinite(result.signal[i])).toBe(true);
+			expect(Number.isFinite(result.line[i])).toBe(true);
+		}
+	});
 });
 
 // --- Ichimoku ---
@@ -572,6 +719,61 @@ describe('ichimokuSnapshot', () => {
 				Array.from({ length: 51 }, () => 95),
 			),
 		).toBeNull();
+	});
+
+	// 契約: ichimokuSeries が返す spanA[i] / spanB[i] は「計算バー位置 i」の値であり、
+	// 描画時の +26 シフトは適用されていない（描画層 / 解釈層の責務）。
+	// 参照: docs/market-data-accuracy-checklist.md §8.5, §8.6, §8.7
+	describe('一目均衡表 index 契約', () => {
+		// 単調増加する 60 本のデータ → 26 本前と末尾で値が大きく異なる
+		const len = 60;
+		const closes = Array.from({ length: len }, (_, i) => 100 + i);
+		const highs = closes.map((c) => c + 5);
+		const lows = closes.map((c) => c - 5);
+
+		it('series.spanA[i] / spanB[i] は計算バー位置 i の値（+26 シフト前）', () => {
+			const series = ichimokuSeries(highs, lows, closes);
+			// spanA[i] は tenkan[i] と kijun[i] が両方有限な i (>= 25) で値を持つ
+			// シフト後に末尾が NaN になる shiftChikou と違い、series 側は末尾まで値が埋まる
+			expect(Number.isFinite(series.spanA[len - 1])).toBe(true);
+			expect(Number.isFinite(series.spanB[len - 1])).toBe(true);
+			// 計算定義どおり: spanA[i] = (tenkan[i] + kijun[i]) / 2
+			for (let i = 25; i < len; i++) {
+				expect(series.spanA[i]).toBeCloseTo((series.tenkan[i] + series.kijun[i]) / 2, 10);
+			}
+		});
+
+		it('series.spanA[len-26] と ichimokuSnapshot().spanA は意味が異なる（トレンド系列で値も異なる）', () => {
+			const series = ichimokuSeries(highs, lows, closes);
+			const snap = ichimokuSnapshot(highs, lows, closes);
+			expect(snap).not.toBeNull();
+			if (!snap) return;
+
+			// snapshot.spanA は「直近 9/26 本」から計算（= 26 本先にプロットされる雲）
+			// series.spanA[len-1] も同じ値（末尾バーが直近窓そのもの）
+			expect(series.spanA[len - 1]).toBeCloseTo(snap.spanA, 10);
+			expect(series.spanB[len - 1]).toBeCloseTo(snap.spanB, 10);
+
+			// 一方 series.spanA[len-26] は 26 本前のバーで計算された値（=「今日の雲」位置）
+			// 単調増加データなので 26 本ぶんの差が出る
+			expect(series.spanA[len - 26]).not.toBeCloseTo(snap.spanA, 4);
+			expect(series.spanB[len - 26]).not.toBeCloseTo(snap.spanB, 4);
+			// 増加データなので series.spanA[len-26] < snap.spanA となる
+			expect(series.spanA[len - 26]).toBeLessThan(snap.spanA);
+		});
+
+		it('chikou[i] = closes[i]（遅行スパンの位置シフトは shiftChikou() の責務）', () => {
+			const series = ichimokuSeries(highs, lows, closes);
+			expect(series.chikou).toHaveLength(len);
+			for (let i = 0; i < len; i++) {
+				expect(series.chikou[i]).toBe(closes[i]);
+			}
+			// 確認: shiftChikou を別途適用すると末尾 26 個が NaN になる
+			const shifted = shiftChikou(series.chikou, 26);
+			for (let i = len - 26; i < len; i++) {
+				expect(shifted[i]).toBeNaN();
+			}
+		});
 	});
 });
 
