@@ -180,6 +180,84 @@ PR #491 で修正済み。修正前の誤用箇所と修正方針を以下に履
 RSI を検証したい場合は `output.subPanels.RSI_14`、
 MACD は `output.subPanels.MACD.line / signal / hist` を参照する。
 
+### 8.13 ライブ spot check（任意・推奨） ✅
+
+unit golden（§8.1–§8.12）と契約文書まで揃っても、「実 bitbank API + 未確定足を
+含む最終値」が外部チャートとずれないかは別途確認が必要。手動 spot check の
+手順をここに固定し、実施結果を「実施履歴」に追記していくことで、フェーズ毎に
+再現可能な生存確認（regression safety net）として機能させる。
+
+#### 目的
+
+unit golden では捕まらない「実 API レスポンス + 未確定足を含む最終値」が、
+TradingView 等の外部チャートと一致することを手動確認する。
+取得層 + 計算層 + 加工層を通したエンドツーエンドの数値契約に対する
+生存確認として、phase 単位で 1 回以上記録する。
+
+#### 実行コマンド
+
+```bash
+npx tsx scripts/analyze_indicators_cli.ts btc_jpy 1day 200
+```
+
+- ペアは `btc_jpy` / `eth_jpy` など主要 2 つで OK
+- timeframe は `1day` 推奨（未確定足の影響が小さい）
+- 200 本あれば EMA(200) まで安定する
+
+#### 比較項目（最低 3 つ）
+
+- `RSI(14)` 最終値
+- `BB(20, 2)` の `upper / middle / lower` 最終値
+- `MACD(12, 26, 9)` の `line / signal / hist` 最終値
+
+#### 許容差
+
+- **丸め**: 表示桁数 ±2 桁
+- **最終足**: bitbank と TradingView で確定タイミングが異なる場合があるため、
+  最終値が外れる場合は最終-1 本目で再比較する
+- それでも合わない場合は **実装側のバグ可能性あり** として記録する
+
+#### 記録テンプレート
+
+下の「### 実施履歴」に、以下の形式で 1 ラン 1 エントリ追加する。
+
+```markdown
+#### YYYY-MM-DD: <pair> <timeframe>
+- 実行: `npx tsx scripts/analyze_indicators_cli.ts <pair> <timeframe> 200`
+- 比較対象: TradingView <SOURCE>:<SYMBOL> <TF>
+- RSI(14): bitbank=XX.XX / TV=XX.XX / 差=±X.XX → OK
+- BB(20,2) upper: bitbank=XXXXXXX / TV=XXXXXXX / 差=±X → OK
+- BB(20,2) middle: ... → OK
+- BB(20,2) lower: ... → OK
+- MACD line: ... → OK
+- MACD signal: ... → OK
+- MACD hist: ... → OK
+- 備考: 最終足は未確定のため最終-1 本目で比較
+```
+
+### 実施履歴
+
+§8.13 ライブ spot check の手動実行ログ。phase ごとに最低 1 回追記する。
+
+<!-- TODO(初回実施): 本 PR の作業環境（claude.ai/code の remote sandbox）では
+     `public.bitbank.cc` が egress allowlist に含まれず、CLI 実行が HTTP 403 で
+     失敗するため実値を埋められなかった。ローカル / CI 環境で
+     `npx tsx scripts/analyze_indicators_cli.ts btc_jpy 1day 200` を実行し、
+     TradingView (BITFLYER:BTCJPY 1D) と比較した実値で下記エントリの
+     XX.XX / XXXXXXX 部分を埋めて差し替える。 -->
+
+#### YYYY-MM-DD: btc_jpy 1day（初回・実施待ち）
+- 実行: `npx tsx scripts/analyze_indicators_cli.ts btc_jpy 1day 200`
+- 比較対象: TradingView BITFLYER:BTCJPY 1D
+- RSI(14): bitbank=XX.XX / TV=XX.XX / 差=±X.XX → TODO
+- BB(20,2) upper: bitbank=XXXXXXX / TV=XXXXXXX / 差=±X → TODO
+- BB(20,2) middle: bitbank=XXXXXXX / TV=XXXXXXX / 差=±X → TODO
+- BB(20,2) lower: bitbank=XXXXXXX / TV=XXXXXXX / 差=±X → TODO
+- MACD line: bitbank=XXXXX.XX / TV=XXXXX.XX / 差=±X.XX → TODO
+- MACD signal: bitbank=XXXXX.XX / TV=XXXXX.XX / 差=±X.XX → TODO
+- MACD hist: bitbank=XXXXX.XX / TV=XXXXX.XX / 差=±X.XX → TODO
+- 備考: 初回実施は sandbox の egress 制限によりユーザー環境で実施予定
+
 ---
 
 ## フェーズ4 実施履歴
