@@ -279,7 +279,7 @@ npx tsx scripts/analyze_indicators_cli.ts btc_jpy 1day 200
 
 根拠実装: `tools/analyze_indicators.ts:687-690`（`warning` と `warnings` を別系統で meta に詰める）。
 
-### 9.2 加工ツールが上流 warning を必ず継承する義務 🟡
+### 9.2 加工ツールが上流 warning を必ず継承する義務 ✅
 
 `analyze_market_signal` のような 2 段以上の加工ツールは、上流ツール
 （`get_flow_metrics` / `get_volatility_metrics` / `analyze_indicators`）の
@@ -292,10 +292,13 @@ npx tsx scripts/analyze_indicators_cli.ts btc_jpy 1day 200
 （`analyze_indicators` → `prepare_chart_data` の 1 段加工で確立済みのパターン。
 `upstreamWarning` / `upstreamWarnings` を切り出し、meta に展開する型紙）。
 
-🟡 状態: `analyze_market_signal` は現状この継承を行っていないため、タスクB の
-実装 PR でこの契約に合わせる。
+`analyze_market_signal` 実装位置: `tools/analyze_market_signal.ts:244-258`
+（`collectSourceWarning` で上流 3 ツールの `meta.warning` を
+`[flow] / [volatility] / [indicators]` prefix 付きで集約し、
+`indRes.meta.warnings` を `upstreamWarnings` として継承。
+`meta.warning` / `meta.warnings` は L685-686 で別系統で詰める）。
 
-### 9.3 content 先頭の `⚠️` 行連結義務 🟡
+### 9.3 content 先頭の `⚠️` 行連結義務 ✅
 
 handler が独自に `content` テキストを組む場合でも、tool 層の `summary` 先頭に出した
 `⚠️` 行を handler 側でも **content の先頭に再連結する**。落とすと LLM は警告を
@@ -305,6 +308,10 @@ handler が独自に `content` テキストを組む場合でも、tool 層の `
 `upstreamWarning` / `upstreamWarnings` から組み立てた `⚠️` 行群を連結する。
 `JSON.stringify(data)` を含める場合も **JSON より前** に warning 行を置く
 （`.claude/rules/tools.md` の handler チェックリスト参照）。
+
+`analyze_market_signal` 実装位置: `src/handlers/analyzeMarketSignalHandler.ts:280-295`
+（`warningLines` で `meta.warning` / `meta.warnings` を `⚠️` 付きで組み立て、
+`baseText` の前に連結したものを `content[0].text` に出す）。
 
 ### 9.4 `confidence` の降格契約 ✅
 
@@ -414,3 +421,4 @@ fixture ベースで検証する。
 | #496 | §9（総合シグナルとデータ品質）+ §パターン検出 を契約として追加 | ✅ Merged |
 | #497 | `analyze_market_signal` 上流 warning 集約 + confidence 降格 | ✅ Merged |
 | #498 | パターン検出の横断不変条件テスト追加 | ✅ Merged |
+| #501 | §9.2–9.4 を実装済みに同期 + invariants テスト修正 | 🔄 Open |
