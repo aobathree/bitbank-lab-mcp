@@ -160,6 +160,9 @@ export default async function getMyTradeHistory(args: {
 			pair: t.pair,
 			order_id: t.order_id,
 			side: t.side,
+			// 現物エンドポイントは通常 position_side を返さないが、信用約定混入を可視化するため
+			// 値があればそのまま伝播する（呼び出し側で現物 / 信用を識別できるようにする）。
+			position_side: t.position_side,
 			type: t.type,
 			amount: t.amount,
 			price: t.price,
@@ -235,7 +238,8 @@ export default async function getMyTradeHistory(args: {
 export const toolDef: ToolDefinition = {
 	name: 'get_my_trade_history',
 	description:
-		'[My Trades / Trade History / Fills] 自分の約定履歴（my trades / trade history / fills / executions）を取得。通貨ペア・期間・件数でフィルタ可能。Private API。',
+		'[My Trades / Trade History / Fills] 自分の現物約定履歴（my trades / trade history / fills / executions）を取得。通貨ペア・期間・件数でフィルタ可能。Private API。' +
+		'※ 本ツールは現物約定専用。信用約定の取得は `get_margin_trade_history` を使う。',
 	inputSchema: GetMyTradeHistoryInputSchema,
 	handler: async (args: { pair?: string; count?: number; order?: 'asc' | 'desc'; since?: string; end?: string }) =>
 		getMyTradeHistory(args),

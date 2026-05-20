@@ -306,6 +306,126 @@ describe('paginateTrades — ページネーション境界', () => {
 		expect(result.truncated).toBe(true);
 		expect(calls.length).toBe(1);
 	});
+
+	it('信用約定 (position_side 付き) が混入したレスポンスから現物のみが返る', async () => {
+		// 公式 docs は position_side を「信用取引の時のみ」と明記しているが、API 挙動変更や
+		// 信用約定の混入に備え、現物経路でも position_side == null で防御フィルタする。
+		// paginateMarginTrades の position_side != null と対称化することで、calcPnl と
+		// calcMarginPnl の二重計上を防ぐ。
+		const mixed = [
+			makeTrade({ trade_id: 1, executed_at: 1710000000000 }),
+			// 信用約定（position_side='long'）。フィルタで除外されるべき
+			{
+				trade_id: 2,
+				pair: 'btc_jpy',
+				order_id: 5002,
+				side: 'sell',
+				position_side: 'long',
+				type: 'limit',
+				amount: '0.01',
+				price: '15500000',
+				maker_taker: 'maker',
+				fee_amount_base: '0',
+				fee_amount_quote: '0',
+				profit_loss: '100',
+				executed_at: 1710000001000,
+			} as unknown as ReturnType<typeof makeTrade>,
+			// ショート信用約定も除外されるべき
+			{
+				trade_id: 3,
+				pair: 'btc_jpy',
+				order_id: 5003,
+				side: 'buy',
+				position_side: 'short',
+				type: 'limit',
+				amount: '0.01',
+				price: '15400000',
+				maker_taker: 'maker',
+				fee_amount_base: '0',
+				fee_amount_quote: '0',
+				profit_loss: '200',
+				executed_at: 1710000002000,
+			} as unknown as ReturnType<typeof makeTrade>,
+			makeTrade({ trade_id: 4, executed_at: 1710000003000 }),
+		];
+		const { fetcher } = makeSequentialFetcher([mockBitbankSuccess({ trades: mixed })]);
+		const client = new BitbankPrivateClient({ fetcher });
+
+		const result = await paginateTrades(client);
+		expect(result.trades).toHaveLength(2);
+		const ids = result.trades.map((t) => t.trade_id);
+		expect(ids).toEqual([1, 4]);
+		// 全レコードが position_side を持たないことを保証（calcPnl への流入を遮断）
+		for (const t of result.trades) {
+			expect(t.position_side).toBeUndefined();
+		}
+		expect(result.truncated).toBe(false);
+	});
+
+	it('全件信用約定 (position_side 付き) のレスポンスは空配列を返し truncated=false', async () => {
+		// API が信用専用ページを返した極端なケース。現物経路の戻り値は空になる。
+		const marginOnly = Array.from({ length: 5 }, (_, i) => ({
+			trade_id: 100 + i,
+			pair: 'btc_jpy',
+			order_id: 6000 + i,
+			side: 'sell' as const,
+			position_side: 'long',
+			type: 'limit',
+			amount: '0.01',
+			price: '15000000',
+			maker_taker: 'maker',
+			fee_amount_base: '0',
+			fee_amount_quote: '0',
+			executed_at: 1710000000000 + i * 1000,
+		}));
+		const { fetcher } = makeSequentialFetcher([mockBitbankSuccess({ trades: marginOnly })]);
+		const client = new BitbankPrivateClient({ fetcher });
+
+		const result = await paginateTrades(client);
+		expect(result.trades).toHaveLength(0);
+		// batch.length (5) < TRADE_PAGE_SIZE (1000) で通常完了扱い
+		expect(result.truncated).toBe(false);
+	});
+
+	it('満杯バッチが全て信用約定でも lastTs が前進していれば次ページを取得し現物約定を拾う', async () => {
+		// 古い順 (asc) 取得で「初期は信用利用 → 途中から現物のみ」の口座を想定。
+		// 1 ページ目が全て信用でも、後続ページに現物約定があれば取得できなければならない
+		// （フィルタ後の件数のみで早期打ち切りすると取りこぼす）。
+		const marginPage = Array.from({ length: 1000 }, (_, i) => ({
+			trade_id: 200 + i,
+			pair: 'btc_jpy',
+			order_id: 7000 + i,
+			side: 'sell' as const,
+			position_side: 'long',
+			type: 'limit',
+			amount: '0.01',
+			price: '15000000',
+			maker_taker: 'maker',
+			fee_amount_base: '0',
+			fee_amount_quote: '0',
+			executed_at: 1710000000000 + i * 1000,
+		}));
+		const spotPage = [
+			makeTrade({ trade_id: 9001, executed_at: 1710001500000 }),
+			makeTrade({ trade_id: 9002, executed_at: 1710001600000 }),
+		];
+		const { fetcher, calls } = makeSequentialFetcher([
+			mockBitbankSuccess({ trades: marginPage }),
+			mockBitbankSuccess({ trades: spotPage }),
+		]);
+		const client = new BitbankPrivateClient({ fetcher });
+
+		const result = await paginateTrades(client);
+		expect(result.trades).toHaveLength(2);
+		const ids = result.trades.map((t) => t.trade_id);
+		expect(ids).toEqual([9001, 9002]);
+		expect(result.truncated).toBe(false);
+		// 2 ページ取得（早期打ち切りしていない）
+		expect(calls.length).toBe(2);
+		// 2 回目の URL に since=（page1 の lastTs）が含まれる
+		const lastTsPage1 = 1710000000000 + 999 * 1000;
+		expect(calls[1]).toContain(`since=${lastTsPage1}`);
+	});
 });
 
 describe('paginateMarginTrades — ページネーション境界', () => {

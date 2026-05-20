@@ -86,7 +86,17 @@ async function paginateWithdrawals(
 	return { withdrawals: all, complete: false };
 }
 
-/** ページネーション付きで約定履歴を取得（最大 MAX_PAGES ページ、古い順） */
+/**
+ * ページネーション付きで現物約定履歴を取得（最大 MAX_PAGES ページ、古い順）。
+ *
+ * 公式 docs (bitbankinc/bitbank-api-docs) は trade_history の `position_side` を
+ * 「信用取引の時のみ」と明記しているため、現物エンドポイントから返るレコードには
+ * 通常 `position_side` が含まれない。ただし API 側の挙動変更や信用約定の混入により
+ * `position_side != null` のレコードが現物経路に流れ込むと、calcPnl が信用約定を
+ * 現物の移動平均原価に取り込み、別経路の `paginateMarginTrades` + `calcMarginPnl`
+ * と二重計上になる。防御的に `position_side == null` で現物のみに絞る
+ * （paginateMarginTrades の `position_side != null` フィルタと対称化）。
+ */
 export async function paginateTrades(
 	client: BitbankPrivateClient,
 	sinceMs?: number,
@@ -100,16 +110,22 @@ export async function paginateTrades(
 		const result = await tryGet<{ trades: RawTrade[] }>(client, '/v1/user/spot/trade_history', params);
 		if (!result.ok) break;
 		const batch = result.data.trades || [];
-		const newRecords = batch.filter((t) => !seenIds.has(t.trade_id));
+		// 信用約定（position_side 付き）が混入した場合に備え、現物のみに絞る。
+		const spotOnly = batch.filter((t) => t.position_side == null);
+		const newRecords = spotOnly.filter((t) => !seenIds.has(t.trade_id));
 		for (const t of newRecords) seenIds.add(t.trade_id);
 		all.push(...newRecords);
+		// truncated 判定はフィルタ前の batch.length を使う。フィルタ後の長さで判定すると
+		// 信用比率が高いとき早期終了し、次ページの現物約定を取り逃がす（paginateMarginTrades と同じ理由）。
 		if (batch.length < TRADE_PAGE_SIZE) return { trades: all, truncated: false };
-		// 同一タイムスタンプが TRADE_PAGE_SIZE 件以上連続して進捗しない場合の保険
-		if (newRecords.length === 0) return { trades: all, truncated: true };
-		// 次ページ: 最後の約定の executed_at を since に（同一 ts のレコードを次ページに含めて再取得し、dedup する）
+		// 同一タイムスタンプが TRADE_PAGE_SIZE 件以上連続して進捗しない場合の保険。
+		// カーソルベース（since の前進有無）で判定して、満杯信用ページに当たった瞬間に
+		// 後続の現物約定を取り逃がさないようにする（paginateMarginTrades と同じ）。
 		const lastTs = batch[batch.length - 1]?.executed_at;
 		if (!lastTs) break;
-		since = String(lastTs);
+		const nextSince = String(lastTs);
+		if (nextSince === since) return { trades: all, truncated: true };
+		since = nextSince;
 	}
 	// ループ脱出は全て未完了（MAX_PAGES 到達 / API エラー / lastTs 欠損）。
 	// 境界 dedup で all.length が TRADE_PAGE_SIZE の倍数にならないケースを誤って完了扱いしないよう、

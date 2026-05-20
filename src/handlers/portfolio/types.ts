@@ -23,6 +23,8 @@ export interface RawTrade {
 	pair: string;
 	order_id: number;
 	side: string;
+	/** 信用約定が混入した場合のみ存在。現物 API レスポンスでは通常未定義 */
+	position_side?: string;
 	type: string;
 	amount: string;
 	price: string;

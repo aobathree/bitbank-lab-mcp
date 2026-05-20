@@ -393,6 +393,43 @@ fixture ベースで検証する。
 
 ---
 
+## 11. 現物 / 信用約定の経路分離
+
+bitbank Private API `/v1/user/spot/trade_history` は現物 / 信用の両方を返し得るため、
+損益計算で二重計上を避けるには取得経路を明示的に分ける必要がある。
+
+### 11.1 `position_side` による現物・信用の振り分け ✅
+
+公式 docs (bitbankinc/bitbank-api-docs) は `position_side` を「信用取引の時のみ」と
+明記している。本プロジェクトでは以下のルールで取得層を対称化する:
+
+| 経路 | フィルタ | 用途 |
+|---|---|---|
+| 現物 (`paginateTrades`) | `position_side == null` のみ通す | `calcPnl` の移動平均原価・実現損益 |
+| 信用 (`paginateMarginTrades`) | `position_side != null` のみ通す | `calcMarginPnl` の決済損益・利息・手数料 |
+
+**理由**: フィルタを外すと、`paginateTrades` が信用約定を `calcPnl` に流して
+現物の平均取得単価を歪め、同じ約定が `paginateMarginTrades` の `profit_loss` でも
+計上されて二重計上になる。`paginateMarginTrades` 側は `type=margin` パラメータが
+無視される API 挙動への保険として既に `position_side != null` でフィルタしており、
+`paginateTrades` 側も対称化することで経路分離を契約として固定する。
+
+### 11.2 ツール出力での `position_side` 露出 ✅
+
+| ツール | `position_side` の扱い |
+|---|---|
+| `get_my_trade_history` | 現物専用。`position_side` が値を持つ場合は出力に伝播し、呼び出し側で混入を検知可能にする（通常は出ない） |
+| `get_margin_trade_history` | 信用専用。`position_side` (`long` / `short`) は常に存在し、出力でも必須項目として扱う |
+| `analyze_my_portfolio` | 内部で `paginateTrades` / `paginateMarginTrades` を併用。経路は上記 §11.1 で分離済み |
+
+### 11.3 該当実装
+
+- 現物フィルタ: `src/handlers/portfolio/fetch.ts::paginateTrades`
+- 信用フィルタ: `src/handlers/portfolio/fetch.ts::paginateMarginTrades`
+- スキーマ: `src/private/schemas.ts` の `TradeItemSchema.position_side`（optional）
+
+---
+
 ## フェーズ4 実施履歴
 
 | PR | 内容 | 状態 |

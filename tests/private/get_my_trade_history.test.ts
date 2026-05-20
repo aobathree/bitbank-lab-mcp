@@ -221,6 +221,61 @@ describe('get_my_trade_history', () => {
 		expect(result.data.trades[0].fee_occurred_amount_quote).not.toBe(result.data.trades[0].fee_amount_quote);
 	});
 
+	it('position_side が API レスポンスに含まれる場合、出力に伝播する（信用約定混入の可視化）', async () => {
+		// 本ツールは現物専用だが、API 仕様変更や信用約定混入を検知できるよう、
+		// position_side フィールドが返ってきた場合は出力にマップする。
+		const trades = [
+			{
+				trade_id: 801,
+				pair: 'btc_jpy',
+				order_id: 8001,
+				side: 'sell',
+				position_side: 'long',
+				type: 'limit',
+				amount: '0.01',
+				price: '15500000',
+				maker_taker: 'maker',
+				fee_amount_base: '0',
+				fee_amount_quote: '0',
+				executed_at: 1710000000000,
+			},
+		];
+		setupFetchMock(mockBitbankSuccess({ trades }));
+
+		const { default: getMyTradeHistory } = await import('../../tools/private/get_my_trade_history.js');
+		const result = await getMyTradeHistory({});
+
+		assertOk(result);
+		expect(result.data.trades[0].position_side).toBe('long');
+	});
+
+	it('position_side が API レスポンスに含まれない場合、undefined を伝播する（通常の現物約定）', async () => {
+		// 公式 docs は position_side を「信用取引の時のみ」と明記しているため、
+		// 現物約定のみのレスポンスでは undefined になる。fallback で値を埋めないことを保証。
+		const trades = [
+			{
+				trade_id: 802,
+				pair: 'btc_jpy',
+				order_id: 8002,
+				side: 'buy',
+				type: 'limit',
+				amount: '0.01',
+				price: '15000000',
+				maker_taker: 'maker',
+				fee_amount_base: '0.00001',
+				fee_amount_quote: '0',
+				executed_at: 1710000000000,
+			},
+		];
+		setupFetchMock(mockBitbankSuccess({ trades }));
+
+		const { default: getMyTradeHistory } = await import('../../tools/private/get_my_trade_history.js');
+		const result = await getMyTradeHistory({});
+
+		assertOk(result);
+		expect(result.data.trades[0].position_side).toBeUndefined();
+	});
+
 	it('asc 順で10件超の場合は末尾10件を表示する', async () => {
 		const trades = Array.from({ length: 12 }, (_, i) => ({
 			trade_id: 300 + i,

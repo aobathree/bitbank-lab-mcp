@@ -65,6 +65,12 @@ const TradeItemSchema = z.object({
 	pair: z.string().describe('通貨ペア'),
 	order_id: z.number().describe('注文ID'),
 	side: z.string().describe('売買（buy / sell）'),
+	position_side: z
+		.string()
+		.optional()
+		.describe(
+			'建玉方向（long / short）。現物約定では通常 undefined。値がある場合は信用約定が混入している（本ツールは現物専用のため通常は出ない。詳細は get_margin_trade_history を参照）',
+		),
 	type: z.string().describe('注文タイプ（limit / market）'),
 	amount: z.string().describe('約定数量'),
 	price: z.string().describe('約定価格'),
