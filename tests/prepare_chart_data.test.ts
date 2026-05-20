@@ -198,8 +198,28 @@ describe('prepare_chart_data', () => {
 		const res = await prepareChartData('btc_jpy', '1day', 90, indicators);
 		assertOk(res);
 		expect(res.data.candles.length).toBe(25);
-		expect(res.summary).toContain('limit was capped');
-		expect(res.summary).toContain('from 90 to 25');
+		// summary 先頭に独立した ⚠️ 行として出る（インライン連結ではない）
+		expect(res.summary.startsWith('⚠️ limit was capped from 90 to 25')).toBe(true);
+		// meta.warning に programmatic に露出している
+		expect(res.meta.warning).toBeDefined();
+		expect(res.meta.warning).toContain('limit was capped from 90 to 25');
+	});
+
+	it('truncation 発生時 handler content[0].text の先頭に ⚠️ 行として出る', async () => {
+		mockFetch(makeOhlcvRows(600));
+		const handlerRes = (await toolDef.handler({
+			pair: 'btc_jpy',
+			type: '1day',
+			limit: 90,
+			indicators: ['SMA_25', 'SMA_75', 'BB', 'RSI', 'MACD'],
+		})) as { content: Array<{ text: string }> };
+		const text = handlerRes.content[0].text;
+		expect(text.startsWith('⚠️ limit was capped from 90 to 25')).toBe(true);
+		// JSON 本体より前に warning が出る
+		const idxWarning = text.indexOf('⚠️');
+		const idxJson = text.indexOf('"times"');
+		expect(idxWarning).toBeLessThan(idxJson);
+		expect(idxWarning).toBeGreaterThanOrEqual(0);
 	});
 
 	it('limit が十分小さければ切り詰めが発生しない', async () => {

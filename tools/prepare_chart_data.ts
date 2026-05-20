@@ -249,22 +249,30 @@ export default async function prepareChartData(
 		// 両者は別系統として保持し、summary / handler content では別行で出す。
 		const upstream = extractUpstreamWarning(res.meta);
 
+		// 自動切り詰めが発生した場合、ユーザー指定値の書き換えをサイレントに飲み込まないよう
+		// 上流 warning と同じ channel（meta.warning）に載せて summary 先頭の ⚠️ 行として出す。
+		const truncWarning =
+			effectiveLimit < limit ? `limit was capped from ${limit} to ${effectiveLimit} to reduce context size` : undefined;
+		const mergedWarning = [truncWarning, upstream.warning].filter(Boolean).join('\n') || undefined;
+		const mergedUpstream: typeof upstream = {
+			...(mergedWarning ? { warning: mergedWarning } : {}),
+			...(upstream.warnings ? { warnings: upstream.warnings } : {}),
+		};
+
 		const meta: PrepareChartDataMeta = {
 			...createMeta(chk.pair),
 			type,
 			count: candles.length,
 			indicators: indicatorNames,
 			volumeUnit,
-			...upstream,
+			...mergedUpstream,
 		};
 
 		const seriesNote = indicatorNames.length > 0 ? `, indicators: ${indicatorNames.join(', ')}` : '';
-		const truncNote =
-			effectiveLimit < limit ? ` ⚠️ limit was capped from ${limit} to ${effectiveLimit} to reduce context size` : '';
-		const baseSummary = `${chk.pair} ${type} chart data (${candles.length} candles${seriesNote})${truncNote}`;
+		const baseSummary = `${chk.pair} ${type} chart data (${candles.length} candles${seriesNote})`;
 		// summary 先頭に warning / warnings を別行で連結する（取得層 / 計算層を別系統で出す）。
 		// LLM が summary だけ見ても不完全性に気づけるようにするため。
-		const summary = prependWarnings(baseSummary, upstream, { separator: '\n' });
+		const summary = prependWarnings(baseSummary, mergedUpstream, { separator: '\n' });
 		return ok(summary, data, meta);
 	} catch (err: unknown) {
 		return failFromError(err);
