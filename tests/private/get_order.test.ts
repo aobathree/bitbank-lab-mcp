@@ -230,6 +230,39 @@ describe('get_order', () => {
 		assertFail(result);
 		expect(result.meta.errorType).toBe('upstream_error');
 	});
+
+	it('信用 long 注文の position_side が schema を通過してサマリーに long 表記が出る', async () => {
+		setupFetchMock(mockBitbankSuccess(orderResponse({ position_side: 'long' })));
+
+		const { default: getOrder } = await import('../../tools/private/get_order.js');
+		const result = await getOrder({ pair: 'btc_jpy', order_id: 2001 });
+
+		assertOk(result);
+		expect(result.data.order.position_side).toBe('long');
+		expect(result.summary).toContain('long');
+	});
+
+	it('信用 short 注文のサマリーに short 表記が出る', async () => {
+		setupFetchMock(mockBitbankSuccess(orderResponse({ position_side: 'short', side: 'sell' })));
+
+		const { default: getOrder } = await import('../../tools/private/get_order.js');
+		const result = await getOrder({ pair: 'btc_jpy', order_id: 2001 });
+
+		assertOk(result);
+		expect(result.data.order.position_side).toBe('short');
+		expect(result.summary).toContain('short');
+	});
+
+	it('現物注文では position_side が undefined になり long/short ラベルは出ない', async () => {
+		setupFetchMock(mockBitbankSuccess(orderResponse()));
+
+		const { default: getOrder } = await import('../../tools/private/get_order.js');
+		const result = await getOrder({ pair: 'btc_jpy', order_id: 2001 });
+
+		assertOk(result);
+		expect(result.data.order.position_side).toBeUndefined();
+		expect(result.summary).not.toMatch(/\b(long|short)\b/);
+	});
 });
 
 describe('get_order — 非 PrivateApiError の generic catch', () => {
@@ -280,5 +313,17 @@ describe('get_order — handler (toolDef)', () => {
 
 		expect(result).toHaveProperty('content');
 		expect(result).toHaveProperty('structuredContent');
+	});
+
+	it('信用注文の position_side が content[0].text に含まれる', async () => {
+		setupFetchMock(mockBitbankSuccess(orderResponse({ position_side: 'long' })));
+
+		const { toolDef } = await import('../../tools/private/get_order.js');
+		const result = (await toolDef.handler({ pair: 'btc_jpy', order_id: 2001 })) as {
+			content: { text: string }[];
+		};
+
+		expect(result.content[0].text).toContain('long');
+		expect(result.content[0].text).toContain('position_side');
 	});
 });

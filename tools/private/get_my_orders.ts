@@ -84,6 +84,7 @@ export default async function getMyOrders(args: { pair?: string; count?: number;
 				order_id: o.order_id,
 				pair: o.pair,
 				side: o.side,
+				position_side: o.position_side,
 				type: o.type,
 				start_amount: o.start_amount,
 				remaining_amount: o.remaining_amount,
@@ -105,11 +106,12 @@ export default async function getMyOrders(args: { pair?: string; count?: number;
 
 			for (const o of orders) {
 				const sideLabel = o.side === 'buy' ? '買' : '売';
+				const posLabel = o.position_side === 'long' ? 'long ' : o.position_side === 'short' ? 'short ' : '';
 				const isJpy = o.pair.includes('jpy');
 				const price = o.price ? (isJpy ? formatPrice(Number(o.price)) : o.price) : '成行';
 				const remaining = o.remaining_amount ?? '?';
 				lines.push(
-					`[ID: ${o.order_id}] ${formatPair(o.pair)} ${sideLabel}${o.type} ${remaining} @ ${price} [${o.status}] (${o.ordered_at})`,
+					`[ID: ${o.order_id}] ${formatPair(o.pair)} ${posLabel}${sideLabel}${o.type} ${remaining} @ ${price} [${o.status}] (${o.ordered_at})`,
 				);
 			}
 

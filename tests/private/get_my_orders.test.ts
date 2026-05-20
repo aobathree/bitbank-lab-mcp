@@ -355,6 +355,80 @@ describe('get_my_orders', () => {
 		assertOk(result);
 		expect(result.summary).toContain('全ペア');
 	});
+
+	it('信用 long 注文の position_side が data に保持されサマリーに long 表記が出る', async () => {
+		setupFetchMock(
+			mockBitbankSuccess({
+				orders: [
+					{
+						order_id: 7001,
+						pair: 'btc_jpy',
+						side: 'buy',
+						position_side: 'long',
+						type: 'limit',
+						start_amount: '0.01',
+						remaining_amount: '0.01',
+						executed_amount: '0',
+						price: '14000000',
+						average_price: '0',
+						status: 'UNFILLED',
+						ordered_at: 1710000000000,
+					},
+				],
+			}),
+		);
+
+		const { default: getMyOrders } = await import('../../tools/private/get_my_orders.js');
+		const result = await getMyOrders({});
+
+		assertOk(result);
+		expect(result.data.orders).toHaveLength(1);
+		expect(result.data.orders[0].position_side).toBe('long');
+		expect(result.summary).toContain('long');
+	});
+
+	it('信用 short 注文のサマリーに short 表記が出る', async () => {
+		setupFetchMock(
+			mockBitbankSuccess({
+				orders: [
+					{
+						order_id: 7002,
+						pair: 'btc_jpy',
+						side: 'sell',
+						position_side: 'short',
+						type: 'limit',
+						start_amount: '0.01',
+						remaining_amount: '0.01',
+						executed_amount: '0',
+						price: '15000000',
+						average_price: '0',
+						status: 'UNFILLED',
+						ordered_at: 1710000000000,
+					},
+				],
+			}),
+		);
+
+		const { default: getMyOrders } = await import('../../tools/private/get_my_orders.js');
+		const result = await getMyOrders({});
+
+		assertOk(result);
+		expect(result.data.orders[0].position_side).toBe('short');
+		expect(result.summary).toContain('short');
+	});
+
+	it('現物注文では position_side が undefined になり long/short ラベルは出ない', async () => {
+		setupFetchMock(mockBitbankSuccess(rawActiveOrdersResponse));
+
+		const { default: getMyOrders } = await import('../../tools/private/get_my_orders.js');
+		const result = await getMyOrders({});
+
+		assertOk(result);
+		for (const o of result.data.orders) {
+			expect(o.position_side).toBeUndefined();
+		}
+		expect(result.summary).not.toMatch(/\b(long|short)\b/);
+	});
 });
 
 describe('get_my_orders — handler (toolDef)', () => {

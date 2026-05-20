@@ -18,6 +18,7 @@ import type { ToolDefinition } from '../../src/tool-definition.js';
 /** 注文情報を人間可読な文字列に整形 */
 function formatOrderSummary(o: OrderResponse, pair: string): string {
 	const sideLabel = o.side === 'buy' ? '買' : '売';
+	const posLabel = o.position_side === 'long' ? 'long ' : o.position_side === 'short' ? 'short ' : '';
 	const isJpy = pair.includes('jpy');
 	const price = o.price ? (isJpy ? formatPrice(Number(o.price)) : o.price) : '成行';
 	const amount = o.start_amount ?? o.executed_amount;
@@ -25,7 +26,7 @@ function formatOrderSummary(o: OrderResponse, pair: string): string {
 
 	lines.push(`注文詳細: ${formatPair(pair)}`);
 	lines.push(`  注文ID: ${o.order_id}`);
-	lines.push(`  方向: ${sideLabel} / タイプ: ${o.type}`);
+	lines.push(`  方向: ${posLabel}${sideLabel} / タイプ: ${o.type}`);
 	lines.push(`  数量: ${amount} / 未約定: ${o.remaining_amount ?? '0'} / 約定済: ${o.executed_amount}`);
 	lines.push(`  価格: ${price}`);
 	if (o.average_price && o.average_price !== '0') {

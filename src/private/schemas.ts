@@ -13,6 +13,9 @@ const PrivateFailResultSchema = z.object({
 	meta: z.object({ errorType: z.string() }).passthrough(),
 });
 
+/** 信用取引の建玉方向（共有 enum：注文照会・信用系の両方で使う） */
+export const PositionSideEnum = z.enum(['long', 'short']);
+
 // ── get_my_assets ──
 
 export const GetMyAssetsInputSchema = z.object({
@@ -124,6 +127,7 @@ const OrderItemSchema = z.object({
 	order_id: z.number().describe('注文ID'),
 	pair: z.string().describe('通貨ペア'),
 	side: z.string().describe('売買（buy / sell）'),
+	position_side: PositionSideEnum.optional().describe('信用取引の建玉方向（long / short）。現物注文では undefined'),
 	type: z.string().describe('注文タイプ（limit / market / stop 等）'),
 	start_amount: z.string().optional().describe('注文数量'),
 	remaining_amount: z.string().optional().describe('未約定数量'),
@@ -665,14 +669,12 @@ export const OrderStatusEnum = z.enum([
  */
 export const SpotOrderTypeEnum = z.enum(['limit', 'market', 'stop', 'stop_limit']);
 
-/** 信用取引の建玉方向 */
-export const PositionSideEnum = z.enum(['long', 'short']);
-
 /** 注文レスポンス（単一） — bitbank API が返す注文オブジェクト */
 const OrderResponseSchema = z.object({
 	order_id: z.number().describe('注文ID'),
 	pair: z.string().describe('通貨ペア'),
 	side: z.enum(['buy', 'sell']).describe('売買方向'),
+	position_side: PositionSideEnum.optional().describe('信用取引の建玉方向（long / short）。現物注文では undefined'),
 	type: z.string().describe('注文タイプ'),
 	start_amount: z.string().nullable().describe('注文数量'),
 	remaining_amount: z.string().nullable().describe('未約定数量'),

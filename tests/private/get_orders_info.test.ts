@@ -210,6 +210,37 @@ describe('get_orders_info', () => {
 		expect(result.summary).toContain('REJECTED');
 		expect(result.summary).toContain('TRIGGERED');
 	});
+
+	it('信用 long/short 注文の position_side が schema を通過してサマリーに long/short 表記が出る', async () => {
+		setupFetchMock(
+			mockBitbankSuccess({
+				orders: [
+					orderData(4001, 'buy', { position_side: 'long' }),
+					orderData(4002, 'sell', { position_side: 'short' }),
+				],
+			}),
+		);
+
+		const { default: getOrdersInfo } = await import('../../tools/private/get_orders_info.js');
+		const result = await getOrdersInfo({ pair: 'btc_jpy', order_ids: [4001, 4002] });
+
+		assertOk(result);
+		expect(result.data.orders[0].position_side).toBe('long');
+		expect(result.data.orders[1].position_side).toBe('short');
+		expect(result.summary).toContain('long');
+		expect(result.summary).toContain('short');
+	});
+
+	it('現物注文では position_side が undefined になり long/short ラベルは出ない', async () => {
+		setupFetchMock(mockBitbankSuccess({ orders: [orderData(4001)] }));
+
+		const { default: getOrdersInfo } = await import('../../tools/private/get_orders_info.js');
+		const result = await getOrdersInfo({ pair: 'btc_jpy', order_ids: [4001] });
+
+		assertOk(result);
+		expect(result.data.orders[0].position_side).toBeUndefined();
+		expect(result.summary).not.toMatch(/\b(long|short)\b/);
+	});
 });
 
 describe('get_orders_info — 非 PrivateApiError の generic catch', () => {
@@ -260,5 +291,17 @@ describe('get_orders_info — handler (toolDef)', () => {
 
 		expect(result).toHaveProperty('content');
 		expect(result).toHaveProperty('structuredContent');
+	});
+
+	it('信用注文の position_side が content[0].text に含まれる', async () => {
+		setupFetchMock(mockBitbankSuccess({ orders: [orderData(4001, 'buy', { position_side: 'long' })] }));
+
+		const { toolDef } = await import('../../tools/private/get_orders_info.js');
+		const result = (await toolDef.handler({ pair: 'btc_jpy', order_ids: [4001] })) as {
+			content: { text: string }[];
+		};
+
+		expect(result.content[0].text).toContain('long');
+		expect(result.content[0].text).toContain('position_side');
 	});
 });

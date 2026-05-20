@@ -36,10 +36,11 @@ export default async function getOrdersInfo(args: { pair: string; order_ids: num
 			lines.push('');
 			for (const o of orders) {
 				const sideLabel = o.side === 'buy' ? '買' : '売';
+				const posLabel = o.position_side === 'long' ? 'long ' : o.position_side === 'short' ? 'short ' : '';
 				const price = o.price ? (isJpy ? formatPrice(Number(o.price)) : o.price) : '成行';
 				const amount = o.start_amount ?? o.executed_amount;
 				lines.push(
-					`#${o.order_id} ${sideLabel}${o.type} ${amount} @ ${price} [${o.status}] (${toIsoMs(o.ordered_at) ?? String(o.ordered_at)})`,
+					`#${o.order_id} ${posLabel}${sideLabel}${o.type} ${amount} @ ${price} [${o.status}] (${toIsoMs(o.ordered_at) ?? String(o.ordered_at)})`,
 				);
 			}
 		}
