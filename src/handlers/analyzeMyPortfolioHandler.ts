@@ -30,6 +30,7 @@ import {
 import {
 	fetchCandlePriceData,
 	fetchDepositWithdrawal,
+	fetchMarginAccountInfo,
 	fetchTechnical,
 	fetchTickerPrices,
 	paginateMarginTrades,
@@ -40,6 +41,7 @@ import type {
 	CandlePriceData,
 	DepositWithdrawalSummary,
 	EquityPoint,
+	MarginAccountInfo,
 	PeriodAccountPnl,
 	PeriodDWSummary,
 	PeriodPerformance,
@@ -49,6 +51,50 @@ import type {
 	RawTrade,
 	TechnicalSummary,
 } from './portfolio/types.js';
+
+/** status !== 'NORMAL' のときの警告文言（get_margin_status の WARNING_STATUSES 文言を踏襲） */
+const MARGIN_STATUS_WARNINGS: Record<string, string> = {
+	CALL: '⚠ 追証発生中（CALL）。期日までに追加保証金を入金するか建玉を決済してください',
+	LOSSCUT: '⚠ 強制決済中（LOSSCUT）。保証金率が閾値を下回り、建玉が自動決済されています',
+	DEBT: '⚠ 不足金発生中（DEBT）。速やかに入金してください',
+	SETTLED: '⚠ 信用口座は精算済み（SETTLED）',
+};
+
+/** position_side -> 表示ラベル */
+function positionSideLabel(side: string): string {
+	return side === 'long' ? 'ロング' : side === 'short' ? 'ショート' : side;
+}
+
+/**
+ * 信用建玉サマリを生成する。建玉なし時は空配列を返してハンドラ側で表示スキップ。
+ */
+function buildMarginPositionsBlock(info: MarginAccountInfo): string[] {
+	const positions = info.positions?.positions ?? [];
+	if (positions.length === 0) return [];
+
+	const lines: string[] = [];
+	lines.push('信用建玉:');
+	for (const p of positions) {
+		const sideLabel = positionSideLabel(p.position_side);
+		lines.push(`  ${formatPair(p.pair)} ${sideLabel} ${p.open_amount} (評価額: ${formatPrice(Number(p.product))}円)`);
+	}
+	const longCount = positions.filter((p) => p.position_side === 'long').length;
+	const shortCount = positions.filter((p) => p.position_side === 'short').length;
+	const aggregateParts: string[] = [`ロング ${longCount}件 / ショート ${shortCount}件`];
+
+	// 信用口座状態が取得できている場合、建玉含み損益（マージン口座全体集計）も併記する。
+	// 個別建玉に unrealized_pnl フィールドが無いため API 値（margin_position_profit_loss）を採用。
+	const status = info.status;
+	if (status) {
+		const pl = Number(status.margin_position_profit_loss);
+		if (Number.isFinite(pl)) {
+			const sign = pl >= 0 ? '+' : '';
+			aggregateParts.push(`建玉含み損益: ${sign}${formatPriceJPY(pl)}`);
+		}
+	}
+	lines.push(`  集計: ${aggregateParts.join(' / ')}`);
+	return lines;
+}
 
 export default async function analyzeMyPortfolioHandler(args: {
 	include_technical?: boolean;
@@ -89,12 +135,23 @@ export default async function analyzeMyPortfolioHandler(args: {
 
 		const dwPromise = include_deposit_withdrawal ? fetchDepositWithdrawal(client) : Promise.resolve(null);
 
-		const [tradeResult, marginTradeResult, dwData] = await Promise.all([tradePromise, marginTradePromise, dwPromise]);
+		// 信用口座状態・建玉サマリも並列取得（取得失敗時は warning として summary に反映）。
+		// 信用約定 fetch とは独立してフェイルする可能性があるため別フラグで管理する。
+		const marginAccountInfoPromise = fetchMarginAccountInfo();
+
+		const [tradeResult, marginTradeResult, dwData, marginAccountInfo] = await Promise.all([
+			tradePromise,
+			marginTradePromise,
+			dwPromise,
+			marginAccountInfoPromise,
+		]);
 		const allTrades = tradeResult.trades;
 		const tradesTruncated = tradeResult.truncated;
 		const allMarginTrades = marginTradeResult.trades;
 		const marginTradesTruncated = marginTradeResult.truncated;
 		const marginFetchFailed = marginTradeResult.fetchFailed;
+		const marginStatusFetchFailed = marginAccountInfo.statusFetchFailed;
+		const marginPositionsFetchFailed = marginAccountInfo.positionsFetchFailed;
 
 		// 期間パフォーマンス用: 全関連ペアのキャンドルデータを早期フェッチ開始
 		const allRelevantPairs = new Set<string>();
@@ -537,8 +594,21 @@ export default async function analyzeMyPortfolioHandler(args: {
 
 		// 取得層の不完全性（fetch 失敗 / 上限到達）を先頭に出して LLM が見落とさないようにする。
 		// 信用 fetch 失敗時は truncated と内容が重複するため、信用側の truncated 警告は抑止する。
+		// 信用約定 / 信用口座状態 / 信用建玉の 3 系統は原因切り分けのため警告行を別々に出す。
 		if (marginFetchFailed) {
 			lines.push('⚠️ 信用約定の取得に失敗。信用 PnL は実態を反映しない可能性');
+		}
+		if (marginStatusFetchFailed) {
+			lines.push('⚠️ 信用口座状態の取得に失敗。建玉・追証状態は反映されていません');
+		}
+		if (marginPositionsFetchFailed) {
+			lines.push('⚠️ 信用建玉の取得に失敗。建玉情報は反映されていません');
+		}
+		// 信用口座状態 (status) が取得できかつ NORMAL でない場合、追証・ロスカット等の警告を出す。
+		const marginStatus = marginAccountInfo.status;
+		if (marginStatus && marginStatus.status !== 'NORMAL') {
+			const warningLine = MARGIN_STATUS_WARNINGS[marginStatus.status];
+			if (warningLine) lines.push(warningLine);
 		}
 		const showMarginTruncated = marginTradesTruncated && !marginFetchFailed;
 		if (tradesTruncated || showMarginTruncated) {
@@ -732,6 +802,13 @@ export default async function analyzeMyPortfolioHandler(args: {
 			}
 		}
 
+		// 信用建玉サマリ（建玉あり時のみ）— 現物サマリ後 / Account PnL 前に挿入
+		const marginPositionsBlock = buildMarginPositionsBlock(marginAccountInfo);
+		if (marginPositionsBlock.length > 0) {
+			lines.push(...marginPositionsBlock);
+			lines.push('');
+		}
+
 		// 実現損益（現物単独）と口座全体 PnL（現物 + 信用決済損益 - 利息 - 手数料）
 		if (accountPnl != null) {
 			const spotSign = accountPnl.spot_realized_pnl >= 0 ? '+' : '';
@@ -869,6 +946,8 @@ export default async function analyzeMyPortfolioHandler(args: {
 			tradesTruncated,
 			marginTradesTruncated,
 			marginFetchFailed,
+			marginStatusFetchFailed,
+			marginPositionsFetchFailed,
 		};
 
 		return AnalyzeMyPortfolioOutputSchema.parse(ok(summary, data, meta));

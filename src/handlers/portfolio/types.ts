@@ -2,8 +2,10 @@
  * portfolio/types — analyzeMyPortfolioHandler で使用する型定義。
  */
 
+import type { z } from 'zod';
 import { getErrorMessage } from '../../../lib/error.js';
 import type { BitbankPrivateClient } from '../../private/client.js';
+import type { GetMarginPositionsDataSchema, GetMarginStatusDataSchema } from '../../private/schemas.js';
 
 // ── Private API レスポンス型 ──
 
@@ -186,6 +188,29 @@ export interface PeriodNetFlowResult {
 	net_flow_jpy: number;
 	/** 期間中の出金手数料合計（JPY）。コストとして performance に残る */
 	withdrawal_fee_jpy: number;
+}
+
+// ── 信用口座状態・建玉 ──
+
+export interface MarginStatusData extends z.infer<typeof GetMarginStatusDataSchema> {}
+export interface MarginPositionsData extends z.infer<typeof GetMarginPositionsDataSchema> {}
+
+/**
+ * 信用口座の状態と建玉サマリ。
+ *
+ * `get_margin_status` と `get_margin_positions` の結果を集約し、
+ * 取得成否を独立フラグで保持する。片方失敗・両方失敗のいずれでも上位は
+ * 原因切り分けが可能（PR #2 で導入した marginFetchFailed と同じ思想）。
+ */
+export interface MarginAccountInfo {
+	/** 取得成功時の信用口座状態。失敗・未提供時は undefined */
+	status: MarginStatusData | undefined;
+	/** get_margin_status の取得失敗フラグ */
+	statusFetchFailed: boolean;
+	/** 取得成功時の信用建玉一覧 */
+	positions: MarginPositionsData | undefined;
+	/** get_margin_positions の取得失敗フラグ */
+	positionsFetchFailed: boolean;
 }
 
 // ── テクニカル ──

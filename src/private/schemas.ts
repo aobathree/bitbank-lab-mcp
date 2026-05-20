@@ -386,6 +386,16 @@ export const AnalyzeMyPortfolioMetaSchema = z.object({
 		.describe(
 			'信用約定 API（type=margin）が途中で失敗した。true のとき margin_realized_pnl=0 が「信用未使用」ではなく「取得失敗による欠落」を意味する点に注意。',
 		),
+	marginStatusFetchFailed: z
+		.boolean()
+		.describe(
+			'信用口座状態 (get_margin_status) の取得に失敗した。true のとき追証・ロスカット等の危険情報が summary に反映されていないため、別途 get_margin_status を呼んで確認すること。',
+		),
+	marginPositionsFetchFailed: z
+		.boolean()
+		.describe(
+			'信用建玉一覧 (get_margin_positions) の取得に失敗した。true のとき信用建玉が summary に反映されていないため、別途 get_margin_positions を呼んで確認すること。',
+		),
 });
 
 export const AnalyzeMyPortfolioOutputSchema = z.union([

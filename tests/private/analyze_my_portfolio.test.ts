@@ -13,10 +13,36 @@ import {
 	mockBitbankSuccess,
 	rawAssetsResponse,
 	rawDepositHistoryResponse,
+	rawMarginPositionsResponse,
+	rawMarginStatusResponse,
 	rawMarginTradeHistoryResponse,
 	rawTradeHistoryResponse,
 	rawWithdrawalHistoryResponse,
 } from '../fixtures/private-api.js';
+
+/** 信用建玉なしの margin/positions レスポンス（デフォルト fixture が長短 2 件持ちのため、テスト用に空版を別に用意） */
+const rawMarginPositionsEmptyResponse = {
+	notice: null,
+	payables: { amount: '0' },
+	positions: [],
+	losscut_threshold: { individual: '110', company: '120' },
+};
+
+/**
+ * 信用口座系 endpoints のデフォルト success レスポンス。
+ * `setupFetchMock` を使わずインライン fetch mock を組むテスト用に、
+ * `/v1/user/margin/status` と `/v1/user/margin/positions` を一発でハンドルする。
+ * マッチしない URL では null を返すので、呼び出し側は短絡評価で処理を続行できる。
+ */
+function maybeMarginAccountResponse(urlStr: string): Response | null {
+	if (urlStr.includes('/v1/user/margin/status')) {
+		return new Response(JSON.stringify(mockBitbankSuccess(rawMarginStatusResponse)), { status: 200 });
+	}
+	if (urlStr.includes('/v1/user/margin/positions')) {
+		return new Response(JSON.stringify(mockBitbankSuccess(rawMarginPositionsEmptyResponse)), { status: 200 });
+	}
+	return null;
+}
 
 const originalFetch = globalThis.fetch;
 
@@ -39,6 +65,10 @@ function setupFetchMock(opts?: {
 	marginTradesFail?: boolean;
 	dwFail?: boolean;
 	marginTrades?: unknown;
+	marginStatusFail?: boolean;
+	marginStatus?: unknown;
+	marginPositionsFail?: boolean;
+	marginPositions?: unknown;
 }) {
 	globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
 		const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
@@ -59,6 +89,26 @@ function setupFetchMock(opts?: {
 				return new Response(JSON.stringify(mockBitbankError(20001)), { status: 400 });
 			}
 			return new Response(JSON.stringify(mockBitbankSuccess(rawAssetsResponse)), { status: 200 });
+		}
+
+		// Private API: margin status — assets パスに包含されないよう、trade_history より前に判定
+		if (urlStr.includes('/v1/user/margin/status')) {
+			if (opts?.marginStatusFail) {
+				return new Response(JSON.stringify(mockBitbankError(10007)), { status: 200 });
+			}
+			const payload = opts?.marginStatus ?? rawMarginStatusResponse;
+			return new Response(JSON.stringify(mockBitbankSuccess(payload)), { status: 200 });
+		}
+
+		// Private API: margin positions
+		if (urlStr.includes('/v1/user/margin/positions')) {
+			if (opts?.marginPositionsFail) {
+				return new Response(JSON.stringify(mockBitbankError(10007)), { status: 200 });
+			}
+			// 既存テストの assertion を壊さないよう、デフォルトは「建玉なし」。
+			// 建玉ありを検証するテストは opts.marginPositions で明示する。
+			const payload = opts?.marginPositions ?? rawMarginPositionsEmptyResponse;
+			return new Response(JSON.stringify(mockBitbankSuccess(payload)), { status: 200 });
 		}
 
 		// Private API: trade history（type=margin を信用約定として分岐）
@@ -130,7 +180,7 @@ describe('analyze_my_portfolio', () => {
 		// PnL 関連フィールドが undefined
 		const btcHolding = result.data.holdings.find((h) => h.asset === 'btc');
 		expect(btcHolding).toBeDefined();
-		expect(btcHolding!.cost_basis).toBeUndefined();
+		expect(btcHolding?.cost_basis).toBeUndefined();
 	});
 
 	it('include_deposit_withdrawal=false で入出金を取得しない', async () => {
@@ -331,6 +381,8 @@ describe('analyze_my_portfolio', () => {
 
 		globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
 			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			const _maybeMargin = maybeMarginAccountResponse(urlStr);
+			if (_maybeMargin) return _maybeMargin;
 			if (urlStr.includes('tickers_jpy')) return new Response(JSON.stringify(tickersJpy), { status: 200 });
 			if (urlStr.includes('candlestick')) return new Response(JSON.stringify(candlesBtcJpy1day120), { status: 200 });
 			if (urlStr.includes('/v1/user/assets')) {
@@ -385,6 +437,8 @@ describe('analyze_my_portfolio', () => {
 
 		globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
 			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			const _maybeMargin = maybeMarginAccountResponse(urlStr);
+			if (_maybeMargin) return _maybeMargin;
 			if (urlStr.includes('tickers_jpy')) return new Response(JSON.stringify(tickersJpy), { status: 200 });
 			if (urlStr.includes('candlestick')) return new Response(JSON.stringify(candlesBtcJpy1day120), { status: 200 });
 			if (urlStr.includes('/v1/user/assets')) {
@@ -455,6 +509,8 @@ describe('analyze_my_portfolio', () => {
 
 		globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
 			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			const _maybeMargin = maybeMarginAccountResponse(urlStr);
+			if (_maybeMargin) return _maybeMargin;
 			if (urlStr.includes('tickers_jpy')) return new Response(JSON.stringify(tickersJpy), { status: 200 });
 			if (urlStr.includes('candlestick')) return new Response(JSON.stringify(candlesBtcJpy1day120), { status: 200 });
 			if (urlStr.includes('/v1/user/assets')) {
@@ -592,6 +648,8 @@ describe('analyze_my_portfolio', () => {
 		const seenUrls: string[] = [];
 		globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
 			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			const _maybeMargin = maybeMarginAccountResponse(urlStr);
+			if (_maybeMargin) return _maybeMargin;
 			seenUrls.push(urlStr);
 
 			if (urlStr.includes('tickers_jpy')) {
@@ -675,6 +733,8 @@ describe('analyze_my_portfolio', () => {
 
 			globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
 				const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+				const _maybeMargin = maybeMarginAccountResponse(urlStr);
+				if (_maybeMargin) return _maybeMargin;
 				if (urlStr.includes('tickers_jpy')) {
 					return new Response(JSON.stringify(tickersJpy), { status: 200 });
 				}
@@ -763,6 +823,8 @@ describe('analyze_my_portfolio', () => {
 
 			globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
 				const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+				const _maybeMargin = maybeMarginAccountResponse(urlStr);
+				if (_maybeMargin) return _maybeMargin;
 				if (urlStr.includes('tickers_jpy')) {
 					return new Response(JSON.stringify(tickersJpy), { status: 200 });
 				}
@@ -872,6 +934,8 @@ describe('analyze_my_portfolio', () => {
 
 			globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
 				const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+				const _maybeMargin = maybeMarginAccountResponse(urlStr);
+				if (_maybeMargin) return _maybeMargin;
 				if (urlStr.includes('tickers_jpy')) {
 					return new Response(JSON.stringify(tickersJpy), { status: 200 });
 				}
@@ -918,6 +982,147 @@ describe('analyze_my_portfolio', () => {
 			vi.useRealTimers();
 		}
 	});
+
+	// ── 信用口座状態・建玉サマリの統合（Cursor レビュー D 対応） ──
+
+	it('信用建玉あり: summary に建玉ブロックが含まれる', async () => {
+		// rawMarginPositionsResponse は BTC ロング 0.01 / ETH ショート 1.0 の 2 件。
+		setupFetchMock({ marginPositions: rawMarginPositionsResponse });
+
+		const { default: handler } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const result = await handler({
+			include_technical: false,
+			include_pnl: true,
+			include_deposit_withdrawal: false,
+		});
+
+		assertOk(result);
+		expect(result.summary).toContain('信用建玉:');
+		expect(result.summary).toContain('BTC/JPY ロング 0.01');
+		expect(result.summary).toContain('ETH/JPY ショート 1.0');
+		expect(result.summary).toContain('集計: ロング 1件 / ショート 1件');
+		// rawMarginStatusResponse.margin_position_profit_loss = '50000' を踏襲
+		expect(result.summary).toContain('建玉含み損益: +50,000円');
+		expect(result.meta.marginPositionsFetchFailed).toBe(false);
+		expect(result.meta.marginStatusFetchFailed).toBe(false);
+	});
+
+	it('信用建玉なし: summary に建玉ブロックが含まれない', async () => {
+		// デフォルトの rawMarginPositionsEmptyResponse は positions=[] を返す。
+		setupFetchMock();
+
+		const { default: handler } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const result = await handler({
+			include_technical: false,
+			include_pnl: true,
+			include_deposit_withdrawal: false,
+		});
+
+		assertOk(result);
+		expect(result.summary).not.toContain('信用建玉:');
+		expect(result.meta.marginPositionsFetchFailed).toBe(false);
+		expect(result.meta.marginStatusFetchFailed).toBe(false);
+	});
+
+	it('status = CALL: summary 先頭付近に追証警告 / status = LOSSCUT: ロスカット警告', async () => {
+		// CALL ケース
+		setupFetchMock({
+			marginStatus: { ...rawMarginStatusResponse, status: 'CALL' },
+		});
+		const { default: handlerCall } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const resultCall = await handlerCall({
+			include_technical: false,
+			include_pnl: true,
+			include_deposit_withdrawal: false,
+		});
+		assertOk(resultCall);
+		expect(resultCall.summary).toContain('⚠ 追証発生中（CALL）');
+		// 警告は summary 先頭付近 (先頭 5 行以内) に出ることを確認
+		const firstFiveLinesCall = resultCall.summary.split('\n').slice(0, 5).join('\n');
+		expect(firstFiveLinesCall).toContain('⚠ 追証発生中（CALL）');
+
+		// LOSSCUT ケース（vi.resetModules で動的 import を再評価する必要があるが、
+		// afterEach の resetModules でクリーンに分離される。同 it 内では一度 reset を挟む）
+		vi.resetModules();
+		setupFetchMock({
+			marginStatus: { ...rawMarginStatusResponse, status: 'LOSSCUT' },
+		});
+		const { default: handlerLc } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const resultLc = await handlerLc({
+			include_technical: false,
+			include_pnl: true,
+			include_deposit_withdrawal: false,
+		});
+		assertOk(resultLc);
+		expect(resultLc.summary).toContain('⚠ 強制決済中（LOSSCUT）');
+		const firstFiveLinesLc = resultLc.summary.split('\n').slice(0, 5).join('\n');
+		expect(firstFiveLinesLc).toContain('⚠ 強制決済中（LOSSCUT）');
+	});
+
+	it('get_margin_status 失敗: ⚠️ 信用口座状態の取得に失敗 warning + meta.marginStatusFetchFailed === true', async () => {
+		setupFetchMock({ marginStatusFail: true });
+
+		const { default: handler } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const result = await handler({
+			include_technical: false,
+			include_pnl: true,
+			include_deposit_withdrawal: false,
+		});
+
+		assertOk(result);
+		expect(result.summary).toContain('⚠️ 信用口座状態の取得に失敗');
+		expect(result.meta.marginStatusFetchFailed).toBe(true);
+		expect(result.meta.marginPositionsFetchFailed).toBe(false);
+		// 信用約定 fetch とは独立して扱われていること
+		expect(result.meta.marginFetchFailed).toBe(false);
+		// 信用約定 / 信用建玉 fetch には言及していないこと（原因切り分け確認）
+		expect(result.summary).not.toContain('⚠️ 信用建玉の取得に失敗');
+		expect(result.summary).not.toContain('⚠️ 信用約定の取得に失敗');
+	});
+
+	it('get_margin_positions 失敗: ⚠️ 信用建玉の取得に失敗 warning + meta.marginPositionsFetchFailed === true', async () => {
+		setupFetchMock({ marginPositionsFail: true });
+
+		const { default: handler } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const result = await handler({
+			include_technical: false,
+			include_pnl: true,
+			include_deposit_withdrawal: false,
+		});
+
+		assertOk(result);
+		expect(result.summary).toContain('⚠️ 信用建玉の取得に失敗');
+		expect(result.meta.marginPositionsFetchFailed).toBe(true);
+		expect(result.meta.marginStatusFetchFailed).toBe(false);
+		// 信用約定 fetch とは独立して扱われていること
+		expect(result.meta.marginFetchFailed).toBe(false);
+		// 建玉サマリ自体は出力されない（fetch 失敗のため）
+		expect(result.summary).not.toContain('信用建玉:\n');
+	});
+
+	it('信用約定 / 信用口座状態 / 信用建玉が同時に失敗: warning が 1 行に集約されず別々に出る', async () => {
+		// 原因切り分けのため、3 系統の warning が独立して summary に並ぶことを確認。
+		setupFetchMock({
+			marginTradesFail: true,
+			marginStatusFail: true,
+			marginPositionsFail: true,
+		});
+
+		const { default: handler } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const result = await handler({
+			include_technical: false,
+			include_pnl: true,
+			include_deposit_withdrawal: false,
+		});
+
+		assertOk(result);
+		expect(result.summary).toContain('⚠️ 信用約定の取得に失敗');
+		expect(result.summary).toContain('⚠️ 信用口座状態の取得に失敗');
+		expect(result.summary).toContain('⚠️ 信用建玉の取得に失敗');
+		expect(result.meta.marginFetchFailed).toBe(true);
+		expect(result.meta.marginStatusFetchFailed).toBe(true);
+		expect(result.meta.marginPositionsFetchFailed).toBe(true);
+	});
 });
 
 describe('analyze_my_portfolio — toolDef handler', () => {
@@ -925,6 +1130,8 @@ describe('analyze_my_portfolio — toolDef handler', () => {
 		// setup URL routing fetch mock
 		globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
 			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			const _maybeMargin = maybeMarginAccountResponse(urlStr);
+			if (_maybeMargin) return _maybeMargin;
 
 			if (urlStr.includes('tickers_jpy')) {
 				return new Response(JSON.stringify(tickersJpy), { status: 200 });

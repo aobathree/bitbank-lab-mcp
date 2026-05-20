@@ -7,10 +7,13 @@
 
 import { dayjs } from '../../../lib/datetime.js';
 import analyzeIndicators from '../../../tools/analyze_indicators.js';
+import getMarginPositions from '../../../tools/private/get_margin_positions.js';
+import getMarginStatus from '../../../tools/private/get_margin_status.js';
 import type { BitbankPrivateClient } from '../../private/client.js';
 import {
 	type CandlePriceData,
 	type DepositWithdrawalData,
+	type MarginAccountInfo,
 	type RawDeposit,
 	type RawMarginTrade,
 	type RawTrade,
@@ -253,6 +256,33 @@ export async function fetchDepositWithdrawal(
 	} catch {
 		return null;
 	}
+}
+
+// ── 信用口座情報 ──
+
+/**
+ * 信用口座状態 (`get_margin_status`) と建玉一覧 (`get_margin_positions`) を並列取得し、
+ * 各々の取得成否を独立フラグで返す。
+ *
+ * 設計判断: ツール handler を直接呼ぶ方式（paginateTrades 等と同じ依存パターン）。
+ * 取得層 / 計算層の warning 文言を再実装せずに `get_margin_status` / `get_margin_positions`
+ * 側のロジックを再利用できる。
+ *
+ * 信用未利用ユーザーで API が success レスポンスを返さないケースに備え、ハンドラ呼び出し
+ * 自体が throw した場合も catch して `*FetchFailed = true` で上位に伝播する。
+ */
+export async function fetchMarginAccountInfo(): Promise<MarginAccountInfo> {
+	const [statusRes, positionsRes] = await Promise.all([
+		getMarginStatus({}).catch(() => null),
+		getMarginPositions({}).catch(() => null),
+	]);
+
+	return {
+		status: statusRes?.ok ? statusRes.data : undefined,
+		statusFetchFailed: !statusRes?.ok,
+		positions: positionsRes?.ok ? positionsRes.data : undefined,
+		positionsFetchFailed: !positionsRes?.ok,
+	};
 }
 
 // ── Ticker 取得 ──
