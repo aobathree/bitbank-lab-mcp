@@ -12,6 +12,7 @@
 import { dayjs, toIsoWithTz } from '../lib/datetime.js';
 import { fail, failFromError, ok, toStructured } from '../lib/result.js';
 import { createMeta, ensurePair } from '../lib/validate.js';
+import { extractUpstreamWarning, prependWarnings } from '../lib/warning-propagation.js';
 import type { Candle, FailResult, NumericSeries, OkResult } from '../src/schemas.js';
 import { PrepareChartDataInputSchema } from '../src/schemas.js';
 import type { ToolDefinition } from '../src/tool-definition.js';
@@ -246,9 +247,7 @@ export default async function prepareChartData(
 		// - res.meta.warning  → 取得層（get_candles の multi-year/multi-day 部分失敗等）
 		// - res.meta.warnings → 計算層（SMA_200 がデータ不足等）
 		// 両者は別系統として保持し、summary / handler content では別行で出す。
-		const upstreamMeta = res.meta as { warning?: string; warnings?: string[] };
-		const upstreamWarning = upstreamMeta?.warning;
-		const upstreamWarnings = Array.isArray(upstreamMeta?.warnings) ? upstreamMeta.warnings : undefined;
+		const upstream = extractUpstreamWarning(res.meta);
 
 		const meta: PrepareChartDataMeta = {
 			...createMeta(chk.pair),
@@ -256,27 +255,16 @@ export default async function prepareChartData(
 			count: candles.length,
 			indicators: indicatorNames,
 			volumeUnit,
-			...(upstreamWarning ? { warning: upstreamWarning } : {}),
-			...(upstreamWarnings && upstreamWarnings.length > 0 ? { warnings: upstreamWarnings } : {}),
+			...upstream,
 		};
 
 		const seriesNote = indicatorNames.length > 0 ? `, indicators: ${indicatorNames.join(', ')}` : '';
 		const truncNote =
 			effectiveLimit < limit ? ` ⚠️ limit was capped from ${limit} to ${effectiveLimit} to reduce context size` : '';
 		const baseSummary = `${chk.pair} ${type} chart data (${candles.length} candles${seriesNote})${truncNote}`;
-		// summary 先頭に warning / warnings を別行で連結する。
-		// LLM が summary だけ見ても取得層/計算層の不完全性に気づけるようにするため。
-		const warningLines: string[] = [];
-		if (upstreamWarning) {
-			warningLines.push(upstreamWarning.startsWith('⚠️') ? upstreamWarning : `⚠️ ${upstreamWarning}`);
-		}
-		if (upstreamWarnings) {
-			for (const w of upstreamWarnings) {
-				if (!w) continue;
-				warningLines.push(w.startsWith('⚠️') ? w : `⚠️ ${w}`);
-			}
-		}
-		const summary = warningLines.length > 0 ? `${warningLines.join('\n')}\n${baseSummary}` : baseSummary;
+		// summary 先頭に warning / warnings を別行で連結する（取得層 / 計算層を別系統で出す）。
+		// LLM が summary だけ見ても不完全性に気づけるようにするため。
+		const summary = prependWarnings(baseSummary, upstream, { separator: '\n' });
 		return ok(summary, data, meta);
 	} catch (err: unknown) {
 		return failFromError(err);

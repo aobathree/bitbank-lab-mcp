@@ -3,6 +3,7 @@ import { formatPercent, formatPriceJPY } from '../lib/formatter.js';
 import { slidingMean } from '../lib/math.js';
 import { fail, failFromError, failFromValidation, ok } from '../lib/result.js';
 import { createMeta, ensurePair } from '../lib/validate.js';
+import { collectUpstreamWarnings, prependWarnings } from '../lib/warning-propagation.js';
 import {
 	type AnalyzeMarketSignalDataSchemaOut,
 	type AnalyzeMarketSignalMetaSchemaOut,
@@ -241,18 +242,11 @@ export default async function analyzeMarketSignal(pair: string = 'btc_jpy', opts
 		//   どのツール由来か追跡できるよう `[flow] / [volatility] / [indicators]` の prefix を付ける。
 		// - meta.warnings (string[]): 計算層の不完全性。analyze_indicators のみが出すので、
 		//   そのまま継承する。warning と warnings は同じ field に混ぜない（別系統）。
-		const upstreamWarningLines: string[] = [];
-		const collectSourceWarning = (source: string, raw: string | undefined) => {
-			if (!raw) return;
-			for (const line of raw.split('\n')) {
-				const trimmed = line.replace(/^⚠️\s*/, '').trim();
-				if (trimmed) upstreamWarningLines.push(`[${source}] ${trimmed}`);
-			}
-		};
-		collectSourceWarning('flow', (flowRes.meta as { warning?: string }).warning);
-		collectSourceWarning('volatility', (volRes.meta as { warning?: string }).warning);
-		collectSourceWarning('indicators', (indRes.meta as { warning?: string }).warning);
-		const upstreamWarning = upstreamWarningLines.length > 0 ? upstreamWarningLines.join('\n') : undefined;
+		const upstreamWarning = collectUpstreamWarnings([
+			{ source: 'flow', warning: (flowRes.meta as { warning?: string }).warning },
+			{ source: 'volatility', warning: (volRes.meta as { warning?: string }).warning },
+			{ source: 'indicators', warning: (indRes.meta as { warning?: string }).warning },
+		]);
 		const rawIndWarnings = (indRes.meta as { warnings?: string[] }).warnings;
 		const upstreamWarnings =
 			Array.isArray(rawIndWarnings) && rawIndWarnings.length > 0 ? [...rawIndWarnings] : undefined;
@@ -669,21 +663,12 @@ export default async function analyzeMarketSignal(pair: string = 'btc_jpy', opts
 
 		// summary 先頭に warning / warnings を別行で連結する（取得層 / 計算層を別系統で出す）。
 		// LLM は structuredContent.meta を参照できないため、テキストに警告を出さないと
-		// データ不完全性を見落とす。prepare_chart_data.ts:267-279 と同じパターン。
-		const textWarningLines: string[] = [];
-		if (upstreamWarning) {
-			for (const line of upstreamWarning.split('\n')) {
-				if (!line) continue;
-				textWarningLines.push(line.startsWith('⚠️') ? line : `⚠️ ${line}`);
-			}
-		}
-		if (upstreamWarnings) {
-			for (const w of upstreamWarnings) {
-				if (!w) continue;
-				textWarningLines.push(w.startsWith('⚠️') ? w : `⚠️ ${w}`);
-			}
-		}
-		const fullText = textWarningLines.length > 0 ? `${textWarningLines.join('\n')}\n${baseText}` : baseText;
+		// データ不完全性を見落とす。prepare_chart_data と同じパターン。
+		const fullText = prependWarnings(
+			baseText,
+			{ warning: upstreamWarning, warnings: upstreamWarnings },
+			{ separator: '\n' },
+		);
 
 		const meta: Record<string, unknown> = createMeta(chk.pair, { type, windows, bucketMs, flowLimit });
 		if (upstreamWarning) meta.warning = upstreamWarning;

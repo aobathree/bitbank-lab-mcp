@@ -8,7 +8,6 @@ import { ICHIMOKU_SHIFT } from '../lib/indicator-config.js';
 import {
 	type BuildIndicatorsTextInput,
 	buildIndicatorsText,
-	prependWarnings,
 	toolDef,
 } from '../src/handlers/analyzeIndicatorsHandler.js';
 import analyzeIndicators from '../tools/analyze_indicators.js';
@@ -951,40 +950,5 @@ describe('toolDef.handler', () => {
 		};
 		expect(res.content[0].text.startsWith('⚠️')).toBe(false);
 		expect(res.content[0].text.startsWith('===')).toBe(true);
-	});
-});
-
-// ── prependWarnings ユニットテスト ─────────────────────
-
-describe('prependWarnings', () => {
-	it('meta.warning と meta.warnings を別行で先頭に連結する', () => {
-		const text = prependWarnings('BODY', {
-			warning: '⚠️ 3日中1日の取得に失敗',
-			warnings: ['SMA_200: データ不足'],
-		});
-		expect(text.startsWith('⚠️ 3日中1日の取得に失敗')).toBe(true);
-		expect(text).toContain('⚠️ SMA_200: データ不足');
-		expect(text).toContain('\n\nBODY');
-	});
-
-	it('⚠️ プレフィックスがなければ自動で付ける', () => {
-		const text = prependWarnings('BODY', { warning: 'partial fetch', warnings: ['SMA_200: データ不足'] });
-		expect(text).toContain('⚠️ partial fetch');
-		expect(text).toContain('⚠️ SMA_200: データ不足');
-	});
-
-	it('両方とも空なら body をそのまま返す', () => {
-		expect(prependWarnings('BODY', {})).toBe('BODY');
-		expect(prependWarnings('BODY', { warnings: [] })).toBe('BODY');
-	});
-
-	it('warnings のみでも先頭に連結される', () => {
-		const text = prependWarnings('BODY', { warnings: ['SMA_5: データ不足'] });
-		expect(text.startsWith('⚠️ SMA_5: データ不足')).toBe(true);
-	});
-
-	it('warning のみでも先頭に連結される', () => {
-		const text = prependWarnings('BODY', { warning: '⚠️ partial fetch' });
-		expect(text.startsWith('⚠️ partial fetch')).toBe(true);
 	});
 });

@@ -4,34 +4,10 @@ import { formatDeviation, formatPercent, formatPriceJPY, formatTrendSymbol } fro
 import { ICHIMOKU_SHIFT, RSI_OVERBOUGHT, RSI_OVERSOLD } from '../../lib/indicator-config.js';
 import { EPSILON } from '../../lib/math.js';
 import { toStructured } from '../../lib/result.js';
+import { prependWarnings } from '../../lib/warning-propagation.js';
 import analyzeIndicators from '../../tools/analyze_indicators.js';
 import { GetIndicatorsInputSchema } from '../schemas.js';
 import type { ToolDefinition } from '../tool-definition.js';
-
-// ── 警告行プレフィックス ──
-
-/**
- * meta.warning（上流 fetchWarning: string） と meta.warnings（指標不足: string[]）を
- * 本文の前に別行で連結する。両方欠如時はそのまま body を返す。
- *
- * 上流 warning は既に "⚠️ ..." で始まっているケースが多いが、欠けていれば付与する。
- * 指標不足 warnings は "SMA_200: データ不足" のような形式なので "⚠️ " を必ず付与する。
- */
-export function prependWarnings(body: string, meta: { warning?: string; warnings?: string[] }): string {
-	const lines: string[] = [];
-	if (meta?.warning) {
-		const w = meta.warning;
-		lines.push(w.startsWith('⚠️') ? w : `⚠️ ${w}`);
-	}
-	if (Array.isArray(meta?.warnings)) {
-		for (const w of meta.warnings) {
-			if (!w) continue;
-			lines.push(w.startsWith('⚠️') ? w : `⚠️ ${w}`);
-		}
-	}
-	if (lines.length === 0) return body;
-	return `${lines.join('\n')}\n\n${body}`;
-}
 
 // ── テキスト組み立て: 純粋エクスポート関数 ──
 
