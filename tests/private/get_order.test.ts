@@ -132,6 +132,50 @@ describe('get_order', () => {
 		expect(result.meta.errorType).toBe('authentication_error');
 	});
 
+	it('3ヶ月以上前の注文（50009）で lib の専用文言を返す', async () => {
+		setupFetchMock(mockBitbankError(50009), 400);
+
+		const { getBitbankErrorMessage } = await import('../../src/lib/bitbank-errors.js');
+		const { default: getOrder } = await import('../../tools/private/get_order.js');
+		const result = await getOrder({ pair: 'btc_jpy', order_id: 2001 });
+
+		assertFail(result);
+		expect(result.meta.errorType).toBe('upstream_error');
+		const expected = getBitbankErrorMessage(50009);
+		expect(expected).toBeDefined();
+		expect(result.summary).toBe(`Error: ${expected}`);
+		expect(result.summary).toContain('見つかりません');
+	});
+
+	it('50009 のメッセージが cancel_order の文言と一致する', async () => {
+		const { getBitbankErrorMessage } = await import('../../src/lib/bitbank-errors.js');
+
+		setupFetchMock(mockBitbankError(50009), 400);
+		const { default: getOrder } = await import('../../tools/private/get_order.js');
+		const readResult = await getOrder({ pair: 'btc_jpy', order_id: 2001 });
+
+		// 後続の cancel_order が同じ singleton client / 消費済み Response を踏まないよう
+		// モジュールキャッシュをリセットして fresh な client を再構築する
+		vi.resetModules();
+		setupFetchMock(mockBitbankError(50009), 400);
+		const { generateToken } = await import('../../src/private/confirmation.js');
+		const { token, expiresAt } = generateToken('cancel_order', { pair: 'btc_jpy', order_id: 2001 });
+		const { default: cancelOrder } = await import('../../tools/private/cancel_order.js');
+		const cancelResult = await cancelOrder({
+			pair: 'btc_jpy',
+			order_id: 2001,
+			confirmation_token: token,
+			token_expires_at: expiresAt,
+		});
+
+		assertFail(readResult);
+		assertFail(cancelResult);
+		const expected = `Error: ${getBitbankErrorMessage(50009)}`;
+		expect(readResult.summary).toBe(expected);
+		expect(cancelResult.summary).toBe(expected);
+		expect(readResult.summary).toBe(cancelResult.summary);
+	});
+
 	it('成行注文の価格表示が「成行」になる', async () => {
 		const data = orderResponse({ type: 'market', average_price: '14200000' });
 		delete (data as Record<string, unknown>).price;

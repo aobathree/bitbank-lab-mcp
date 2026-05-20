@@ -111,14 +111,18 @@ describe('cancel_order', () => {
 		expect(result.summary).toContain('売');
 	});
 
-	it('注文が見つからない場合（50009）に適切なエラーメッセージ', async () => {
+	it('注文が見つからない場合（50009）に lib の専用文言を返す', async () => {
 		setupFetchMock(mockBitbankError(50009), 400);
 		const { confirmation_token, token_expires_at } = validToken({ pair: 'btc_jpy', order_id: 99999 });
 
+		const { getBitbankErrorMessage } = await import('../../src/lib/bitbank-errors.js');
 		const { default: cancelOrder } = await import('../../tools/private/cancel_order.js');
 		const result = await cancelOrder({ pair: 'btc_jpy', order_id: 99999, confirmation_token, token_expires_at });
 
 		assertFail(result);
+		const expected = getBitbankErrorMessage(50009);
+		expect(expected).toBeDefined();
+		expect(result.summary).toBe(`Error: ${expected}`);
 		expect(result.summary).toContain('見つかりません');
 	});
 
