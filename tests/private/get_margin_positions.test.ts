@@ -86,7 +86,7 @@ describe('get_margin_positions', () => {
 		expect(result.summary).toContain('全ペア');
 	});
 
-	it('追証発生時にアラートを表示する', async () => {
+	it('追証発生時に ⚠ アラートを summary 先頭に表示する', async () => {
 		const withNotice = {
 			...rawMarginPositionsResponse,
 			notice: {
@@ -103,11 +103,13 @@ describe('get_margin_positions', () => {
 
 		assertOk(result);
 		expect(result.meta.hasNotice).toBe(true);
-		expect(result.summary).toContain('追証');
-		expect(result.summary).toContain('100,000');
+		const firstLine = result.summary.split('\n')[0];
+		expect(firstLine.startsWith('⚠')).toBe(true);
+		expect(firstLine).toContain('追証');
+		expect(firstLine).toContain('100,000');
 	});
 
-	it('不足金がある場合にアラートを表示する', async () => {
+	it('不足金がある場合に ⚠ アラートを summary 先頭に表示する', async () => {
 		const withPayables = {
 			...rawMarginPositionsResponse,
 			payables: { amount: '50000' },
@@ -118,8 +120,10 @@ describe('get_margin_positions', () => {
 		const result = await getMarginPositions({});
 
 		assertOk(result);
-		expect(result.summary).toContain('不足金');
-		expect(result.summary).toContain('50,000');
+		const firstLine = result.summary.split('\n')[0];
+		expect(firstLine.startsWith('⚠')).toBe(true);
+		expect(firstLine).toContain('不足金');
+		expect(firstLine).toContain('50,000');
 	});
 
 	it('losscut_threshold を返す', async () => {
@@ -166,7 +170,7 @@ describe('get_margin_positions', () => {
 		expect(result.meta.pair).toBe('xrp_jpy');
 	});
 
-	it('追証と不足金が同時に発生した場合、両方のアラートを表示する', async () => {
+	it('追証と不足金が同時に発生した場合、両方の ⚠ アラートを summary 先頭に表示する', async () => {
 		const withBoth = {
 			...rawMarginPositionsResponse,
 			notice: {
@@ -184,10 +188,13 @@ describe('get_margin_positions', () => {
 
 		assertOk(result);
 		expect(result.meta.hasNotice).toBe(true);
-		expect(result.summary).toContain('追証');
-		expect(result.summary).toContain('100,000');
-		expect(result.summary).toContain('不足金');
-		expect(result.summary).toContain('50,000');
+		const lines = result.summary.split('\n');
+		expect(lines[0].startsWith('⚠')).toBe(true);
+		expect(lines[0]).toContain('追証');
+		expect(lines[0]).toContain('100,000');
+		expect(lines[1].startsWith('⚠')).toBe(true);
+		expect(lines[1]).toContain('不足金');
+		expect(lines[1]).toContain('50,000');
 	});
 
 	it('不足金が 0 の場合はアラートを表示しない', async () => {
@@ -198,6 +205,18 @@ describe('get_margin_positions', () => {
 
 		assertOk(result);
 		expect(result.summary).not.toContain('不足金');
+	});
+
+	it('notice / payables 無しの場合、summary 先頭は建玉リストヘッダー（⚠ なし）', async () => {
+		setupFetchMock(mockBitbankSuccess(rawMarginPositionsResponse));
+
+		const { default: getMarginPositions } = await import('../../tools/private/get_margin_positions.js');
+		const result = await getMarginPositions({});
+
+		assertOk(result);
+		const firstLine = result.summary.split('\n')[0];
+		expect(firstLine).toContain('信用建玉一覧');
+		expect(firstLine.startsWith('⚠')).toBe(false);
 	});
 
 	it('建玉の評価額・平均取得価格をサマリーに含む', async () => {

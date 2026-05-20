@@ -58,9 +58,25 @@ export default async function getMarginPositions(args: { pair?: string }) {
 		const positions = pair ? raw.positions.filter((p) => p.pair === pair) : raw.positions;
 
 		const hasNotice = raw.notice !== null;
+		const hasPayables = (toNum(raw.payables.amount) ?? 0) > 0;
 
 		// サマリー文字列の生成
+		// 危険情報（追証・不足金）を先頭に出すことで LLM が見落とすリスクを下げる。
+		// get_margin_status.ts と同じく「⚠ 行を summary 先頭に置く」パターンに揃える。
 		const lines: string[] = [];
+
+		if (hasNotice && raw.notice) {
+			const n = raw.notice;
+			const dueDate = toIsoMs(n.due_date_at) ?? String(n.due_date_at);
+			lines.push(`⚠ ${n.what}: ${formatPrice(Number(n.amount))} 円（期日: ${dueDate}）`);
+		}
+		if (hasPayables) {
+			lines.push(`⚠ 不足金: ${formatPrice(toNum(raw.payables.amount))} 円`);
+		}
+		if (lines.length > 0) {
+			lines.push('');
+		}
+
 		const pairLabel = pair ? formatPair(pair) : '全ペア';
 		lines.push(`信用建玉一覧: ${pairLabel} ${positions.length}件`);
 
@@ -82,17 +98,6 @@ export default async function getMarginPositions(args: { pair?: string }) {
 			lines.push(`集計: ロング ${longCount}件 / ショート ${shortCount}件`);
 		} else {
 			lines.push('建玉はありません');
-		}
-
-		// 追証・不足金アラート
-		if (hasNotice && raw.notice) {
-			const n = raw.notice;
-			const dueDate = toIsoMs(n.due_date_at) ?? String(n.due_date_at);
-			lines.push('');
-			lines.push(`⚠ ${n.what}: ${formatPrice(Number(n.amount))} 円（期日: ${dueDate}）`);
-		}
-		if ((toNum(raw.payables.amount) ?? 0) > 0) {
-			lines.push(`⚠ 不足金: ${formatPrice(toNum(raw.payables.amount))} 円`);
 		}
 
 		const summary = lines.join('\n');
