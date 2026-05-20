@@ -11,6 +11,7 @@
  */
 
 import { extractRateLimit, type RateLimitInfo } from '../../lib/http.js';
+import { getBitbankErrorMessage } from '../lib/bitbank-errors.js';
 import { createGetAuthHeaders, createPostAuthHeaders } from './auth.js';
 
 /** テスト時に差し替え可能な HTTP fetcher 型 */
@@ -275,6 +276,14 @@ export class BitbankPrivateClient {
 				httpStatus,
 				errorCode ?? undefined,
 			);
+		}
+
+		// 共通テーブルに登録されたコード
+		if (errorCode != null) {
+			const libMessage = getBitbankErrorMessage(errorCode);
+			if (libMessage) {
+				return new PrivateApiError(libMessage, 'upstream_error', httpStatus, errorCode);
+			}
 		}
 
 		// その他

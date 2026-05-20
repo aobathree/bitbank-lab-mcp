@@ -91,8 +91,8 @@ export default async function cancelOrder(
 	} catch (err) {
 		if (err instanceof PrivateApiError) {
 			// キャンセル固有エラーの補足メッセージ
+			// 50009 は src/lib/bitbank-errors.ts 経由で client.ts が文言を付与するため、ここでは扱わない
 			const codeMessages: Record<number, string> = {
-				50009: '指定された注文が見つかりません（3ヶ月以上前の注文は参照不可）',
 				50010: 'この注文はキャンセルできません',
 				50026: 'この注文は既にキャンセル済みです',
 				50027: 'この注文は既に約定済みです',
