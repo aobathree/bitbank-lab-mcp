@@ -42,6 +42,16 @@ function candlesOk(normalized: Candle[]) {
 	return { ok: true, summary: 'ok', data: { normalized }, meta: { count: normalized.length } };
 }
 
+/** meta に warning を持つ get_candles 結果（partial fetch 等） */
+function candlesOkWithWarning(normalized: Candle[], warning: string) {
+	return {
+		ok: true,
+		summary: 'ok',
+		data: { normalized },
+		meta: { count: normalized.length, warning },
+	};
+}
+
 /** ベースライン陽線を n 本生成 */
 function bullishCandles(n: number, base = 100, step = 3): Candle[] {
 	return Array.from({ length: n }, (_, i) => {
@@ -698,5 +708,97 @@ describe('analyze_candle_patterns', () => {
 		const res = await toolDef.handler({ window_days: 5, history_lookback_days: 30 });
 		expect(res).toBeDefined();
 		expect((res as { ok: boolean }).ok).toBe(true);
+	});
+
+	// ── 上流 warning の伝播（get_candles の取得層 meta.warning） ──────────
+
+	describe('上流 warning の伝播', () => {
+		it('get_candles の meta.warning が tool の meta.warning と summary 先頭に伝播する', async () => {
+			const candles = [
+				...bullishCandles(3),
+				mc(0, 100, 110, 90, 100.2), // doji
+			];
+			mockedGetCandles.mockResolvedValueOnce(
+				asMockResult(candlesOkWithWarning(candles, '⚠️ partial fetch (3日中1日の取得に失敗)')),
+			);
+
+			const res = await analyzeCandlePatterns({
+				window_days: 4,
+				focus_last_n: 4,
+				patterns: ['doji'],
+				history_lookback_days: 30,
+			});
+			assertOk(res);
+			// meta に warning が伝播
+			expect(res.meta?.warning).toBe('⚠️ partial fetch (3日中1日の取得に失敗)');
+			// summary 先頭が warning 行
+			expect(res.summary.startsWith('⚠️ partial fetch')).toBe(true);
+		});
+
+		it('content[0].text の先頭に上流 warning が含まれる（server.ts が content を summary より優先するため最重要）', async () => {
+			const candles = [
+				...bullishCandles(3),
+				mc(0, 100, 110, 90, 100.2), // doji
+			];
+			mockedGetCandles.mockResolvedValueOnce(
+				asMockResult(candlesOkWithWarning(candles, '⚠️ partial fetch (multi-day failure)')),
+			);
+
+			const res = await analyzeCandlePatterns({
+				window_days: 4,
+				focus_last_n: 4,
+				patterns: ['doji'],
+				history_lookback_days: 30,
+			});
+			assertOk(res);
+			expect(res.content).toBeDefined();
+			const firstText = res.content?.[0]?.text ?? '';
+			// content 先頭が warning 行
+			expect(firstText.startsWith('⚠️ partial fetch')).toBe(true);
+			// warning は本文ヘッダーより前に出る
+			const idxWarning = firstText.indexOf('⚠️');
+			const idxHeader = firstText.indexOf('【ローソク足パターン分析結果】');
+			expect(idxWarning).toBeGreaterThanOrEqual(0);
+			expect(idxWarning).toBeLessThan(idxHeader);
+		});
+
+		it('上流 warning 無しなら meta.warning は undefined、content/summary に ⚠️ が含まれない', async () => {
+			const candles = Array.from({ length: 5 }, (_, i) => mc(5 - i, 100, 106, 94, 103));
+			mockedGetCandles.mockResolvedValueOnce(asMockResult(candlesOk(candles)));
+
+			const res = await analyzeCandlePatterns({
+				window_days: 5,
+				focus_last_n: 5,
+				patterns: ['doji'],
+				history_lookback_days: 30,
+			});
+			assertOk(res);
+			expect(res.meta?.warning).toBeUndefined();
+			expect(res.summary.startsWith('⚠️')).toBe(false);
+			const firstText = res.content?.[0]?.text ?? '';
+			// 本文に他で混入する ⚠️ がないことを限定的に確認（partial fetch 等のメッセージは無い）
+			expect(firstText.includes('⚠️ partial fetch')).toBe(false);
+		});
+
+		it('toolDef.handler 経由でも content[0].text 先頭に warning が出る', async () => {
+			const candles = [
+				...bullishCandles(3),
+				mc(0, 100, 110, 90, 100.2), // doji
+			];
+			mockedGetCandles.mockResolvedValueOnce(
+				asMockResult(candlesOkWithWarning(candles, '⚠️ partial fetch (handler test)')),
+			);
+
+			const res = await toolDef.handler({
+				window_days: 4,
+				focus_last_n: 4,
+				patterns: ['doji'],
+				history_lookback_days: 30,
+			});
+			expect((res as { ok: boolean }).ok).toBe(true);
+			const content = (res as { content?: Array<{ text: string }> }).content;
+			expect(content).toBeDefined();
+			expect(content?.[0]?.text.startsWith('⚠️ partial fetch')).toBe(true);
+		});
 	});
 });

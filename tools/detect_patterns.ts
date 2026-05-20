@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import { dayjs } from '../lib/datetime.js';
 import { fail, failFromError, ok } from '../lib/result.js';
+import { extractUpstreamWarning, prependWarnings } from '../lib/warning-propagation.js';
 import { DetectPatternsOutputSchema, type PatternTypeEnum } from '../src/schemas.js';
 import analyzeIndicators from './analyze_indicators.js';
 import { buildStatistics } from './patterns/aftermath.js';
@@ -91,6 +92,12 @@ export default async function detectPatterns(
 
 		const res = await analyzeIndicators(pair, type, limit);
 		if (!res.ok) return DetectPatternsOutputSchema.parse(fail(res.summary || 'failed', 'internal'));
+
+		// 上流 analyze_indicators の meta を取り込む（取得層 / 計算層は別系統）。
+		// - res.meta.warning  → 取得層（get_candles の multi-year/multi-day 部分失敗等）
+		// - res.meta.warnings → 計算層（SMA_200 がデータ不足等）
+		// data.warnings は本ツール独自の検出系警告で、上流とは別フィールドで保持する。
+		const upstream = extractUpstreamWarning(res.meta);
 
 		const candles = res.data.chart.candles as Array<{
 			open: number;
@@ -396,11 +403,14 @@ export default async function detectPatterns(
 			.map(([t, c]) => `${t}×${c}`)
 			.join(', ');
 
-		const summaryText =
+		const baseSummary =
 			`${pair.toUpperCase()} ${tfLabel}（${type}） ${limit}本から${patterns.length}件を検出（${typeCountStr}）${detectionPeriodText}\n\n【検出パターン（全件）】\n${patternSummaries || 'なし'}${statsText}\n\nチャート連携: data.overlays を render_chart_svg.overlays に渡すと注釈/範囲を描画できます。\n\nパターン整合度について（形状一致度・対称性・期間から算出）:\n  0.8以上 = 理想的な形状（教科書的パターン）\n  0.7-0.8 = 標準的な形状（他指標と併用推奨）\n  0.6-0.7 = やや不明瞭（慎重に判断）\n  0.6未満 = 形状不十分` +
 			`\n\n---\n📌 含まれるもの: チャートパターン検出（種類・整合度・期間）、ブレイク情報、統計` +
 			`\n📌 含まれないもの: 出来高によるパターン確認、テクニカル指標値、板情報` +
 			`\n📌 補完ツール: analyze_indicators（指標でパターンを裏付け）, get_flow_metrics（出来高確認）, get_orderbook（板情報）`;
+		// summary 先頭に上流 warning を別行で連結（separator='\n'）。
+		// LLM が summary だけ見ても取得層 / 計算層の不完全性に気づけるようにする。
+		const summaryText = prependWarnings(baseSummary, upstream, { separator: '\n' });
 
 		const out = ok(
 			summaryText,
@@ -415,6 +425,8 @@ export default async function detectPatterns(
 					highlight_patterns: patterns.map((p) => p.type).slice(0, 3),
 				},
 				debug: debugTrimmed,
+				...(upstream.warning ? { warning: upstream.warning } : {}),
+				...(upstream.warnings && upstream.warnings.length > 0 ? { warnings: upstream.warnings } : {}),
 			},
 		);
 		return DetectPatternsOutputSchema.parse(out);

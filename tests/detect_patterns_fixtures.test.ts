@@ -611,4 +611,114 @@ describe('detect_patterns fixtures', () => {
 			]),
 		);
 	});
+
+	// ── 上流 warning の伝播（取得層 meta.warning / 計算層 meta.warnings） ──
+	describe('上流 warning の伝播', () => {
+		function indicatorsOkWithMeta(candles: Candle[], meta: Record<string, unknown>) {
+			return {
+				ok: true,
+				summary: 'ok',
+				data: { chart: { candles } },
+				meta,
+			};
+		}
+
+		it('上流 meta.warning（取得層 partial fetch）が tool の meta.warning と summary 先頭に伝播する', async () => {
+			const candles = buildCompletedDoubleTopCandles();
+			mockedAnalyzeIndicators.mockResolvedValueOnce(
+				asMockResult(
+					indicatorsOkWithMeta(candles, {
+						warning: '⚠️ partial fetch (3日中1日の取得に失敗)',
+					}),
+				),
+			);
+
+			const res = await detectPatterns('btc_jpy', '1day', 26, {
+				patterns: ['double_top'],
+				swingDepth: 2,
+				tolerancePct: 0.02,
+			});
+
+			assertOk(res);
+			expect(res.meta.warning).toBe('⚠️ partial fetch (3日中1日の取得に失敗)');
+			expect(res.meta.warnings).toBeUndefined();
+			// summary 先頭が warning 行
+			expect(res.summary.split('\n')[0]).toContain('⚠️ partial fetch');
+		});
+
+		it('上流 meta.warnings（計算層 SMA_200 不足等）が tool の meta.warnings に継承され、独自の data.warnings とは別フィールドで保持される', async () => {
+			const candles = buildCompletedDoubleTopCandles();
+			mockedAnalyzeIndicators.mockResolvedValueOnce(
+				asMockResult(
+					indicatorsOkWithMeta(candles, {
+						warnings: ['SMA_200: データ不足', 'Ichimoku: データ不足'],
+					}),
+				),
+			);
+
+			const res = await detectPatterns('btc_jpy', '1day', 26, {
+				patterns: ['double_top'],
+				swingDepth: 2,
+				tolerancePct: 0.02,
+			});
+
+			assertOk(res);
+			// meta.warnings に上流計算層 warnings が継承される
+			expect(res.meta.warnings).toEqual(['SMA_200: データ不足', 'Ichimoku: データ不足']);
+			expect(res.meta.warning).toBeUndefined();
+			// data.warnings（本ツール独自の検出系警告）と meta.warnings（上流計算層）は別フィールド
+			// 独自警告は { type, message, suggestedParams } の形だが上流由来は string[]
+			if (Array.isArray(res.data.warnings)) {
+				for (const w of res.data.warnings) {
+					// data.warnings は独自スキーマで、上流の string そのままが混入していないこと
+					expect(typeof w).toBe('object');
+				}
+			}
+			// summary 先頭が warning 行
+			expect(res.summary.split('\n')[0]).toMatch(/^⚠️/);
+			expect(res.summary).toContain('⚠️ SMA_200: データ不足');
+		});
+
+		it('上流の取得層 warning と計算層 warnings の両方が伝播し、別フィールドで保持される', async () => {
+			const candles = buildCompletedDoubleTopCandles();
+			mockedAnalyzeIndicators.mockResolvedValueOnce(
+				asMockResult(
+					indicatorsOkWithMeta(candles, {
+						warning: '⚠️ partial fetch (multi-year)',
+						warnings: ['SMA_200: データ不足'],
+					}),
+				),
+			);
+
+			const res = await detectPatterns('btc_jpy', '1day', 26, {
+				patterns: ['double_top'],
+				swingDepth: 2,
+				tolerancePct: 0.02,
+			});
+
+			assertOk(res);
+			expect(res.meta.warning).toBe('⚠️ partial fetch (multi-year)');
+			expect(res.meta.warnings).toEqual(['SMA_200: データ不足']);
+			// summary の先頭 2 行に取得層 warning と計算層 warnings がそれぞれ出る
+			const lines = res.summary.split('\n');
+			expect(lines[0]).toContain('⚠️ partial fetch');
+			expect(lines[1]).toContain('⚠️ SMA_200: データ不足');
+		});
+
+		it('上流 warning 無しなら meta.warning / meta.warnings は付与されない', async () => {
+			const candles = buildCompletedDoubleTopCandles();
+			mockedAnalyzeIndicators.mockResolvedValueOnce(asMockResult(indicatorsOk(candles)));
+
+			const res = await detectPatterns('btc_jpy', '1day', 26, {
+				patterns: ['double_top'],
+				swingDepth: 2,
+				tolerancePct: 0.02,
+			});
+
+			assertOk(res);
+			expect(res.meta.warning).toBeUndefined();
+			expect(res.meta.warnings).toBeUndefined();
+			expect(res.summary.startsWith('⚠️')).toBe(false);
+		});
+	});
 });

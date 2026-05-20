@@ -2,9 +2,10 @@ import type { z } from 'zod';
 import { timeframeLabel } from '../../lib/formatter.js';
 import { failFromValidation } from '../../lib/result.js';
 import { ensurePair } from '../../lib/validate.js';
+import { prependWarnings } from '../../lib/warning-propagation.js';
 import detectPatterns from '../../tools/detect_patterns.js';
 import { DetectPatternsInputSchema, DetectPatternsOutputSchema } from '../schemas.js';
-import type { ToolDefinition } from '../tool-definition.js';
+import type { McpResponse, ToolDefinition } from '../tool-definition.js';
 import {
 	buildPeriodLine,
 	buildTypeSummary,
@@ -16,6 +17,24 @@ import {
 
 type DetectPatternsInput = z.infer<typeof DetectPatternsInputSchema>;
 type DetectPatternsOutput = z.infer<typeof DetectPatternsOutputSchema>;
+
+/**
+ * 上流 warning（取得層 / 計算層）を view formatter が返す content[0].text の先頭に連結する。
+ * 各 view（debug / summary / full / detailed）で warning 行が消えないように handler 側で統一して付与する。
+ */
+function prependWarningToResponse(
+	response: McpResponse,
+	meta: { warning?: string; warnings?: string[] } | undefined,
+): McpResponse {
+	if (!meta || (!meta.warning && (!meta.warnings || meta.warnings.length === 0))) return response;
+	const first = response.content?.[0];
+	if (!first || first.type !== 'text' || typeof first.text !== 'string') return response;
+	const wrapped = prependWarnings(first.text, meta, { separator: '\n' });
+	return {
+		...response,
+		content: [{ type: 'text', text: wrapped }, ...response.content.slice(1)],
+	};
+}
 
 export const toolDef: ToolDefinition = {
 	name: 'detect_patterns',
@@ -57,21 +76,28 @@ export const toolDef: ToolDefinition = {
 		const count = Number(meta.count ?? pats.length ?? 0);
 		const tfLabel = timeframeLabel(String(type));
 		const hdr = `${String(pair).toUpperCase()} ${tfLabel}（${String(type)}） ${limit ?? count}本から${pats.length}件を検出`;
+		const upstream = { warning: meta.warning, warnings: meta.warnings };
 
 		if (view === 'debug') {
-			return formatDebugView(hdr, meta, pats, res);
+			return prependWarningToResponse(formatDebugView(hdr, meta, pats, res), upstream);
 		}
 
 		const periodLine = buildPeriodLine(pats);
 		const typeSummary = buildTypeSummary(pats);
 
 		if ((view || 'detailed') === 'summary') {
-			return formatSummaryView(hdr, pats, periodLine, typeSummary, patterns, includeForming, res);
+			return prependWarningToResponse(
+				formatSummaryView(hdr, pats, periodLine, typeSummary, patterns, includeForming, res),
+				upstream,
+			);
 		}
 		if ((view || 'detailed') === 'full') {
-			return formatFullView(hdr, pats, periodLine, typeSummary, meta, res);
+			return prependWarningToResponse(formatFullView(hdr, pats, periodLine, typeSummary, meta, res), upstream);
 		}
 		// detailed (default)
-		return formatDetailedView(hdr, pats, periodLine, typeSummary, meta, tolerancePct, patterns, res);
+		return prependWarningToResponse(
+			formatDetailedView(hdr, pats, periodLine, typeSummary, meta, tolerancePct, patterns, res),
+			upstream,
+		);
 	},
 };

@@ -206,6 +206,8 @@ export const DetectPatternsOutputSchema = z.union([
 						.optional(),
 				})
 				.optional(),
+			warning: z.string().optional(),
+			warnings: z.array(z.string()).optional(),
 		}),
 	}),
 	FailResultSchema,
@@ -323,6 +325,7 @@ export const AnalyzeCandlePatternsMetaSchemaOut = BaseMetaSchema.extend({
 	patterns_checked: z.array(CandlePatternTypeEnum),
 	history_lookback_days: z.number().int(),
 	history_horizons: z.array(z.number().int()),
+	warning: z.string().optional(),
 });
 
 export const AnalyzeCandlePatternsOutputSchema = z.union([

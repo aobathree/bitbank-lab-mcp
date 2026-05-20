@@ -32,6 +32,7 @@ import {
 import { dayjs, nowIso, today, toIsoTime } from '../lib/datetime.js';
 import { fail, failFromError, failFromValidation } from '../lib/result.js';
 import { createMeta, ensurePair } from '../lib/validate.js';
+import { extractUpstreamWarning, prependWarnings } from '../lib/warning-propagation.js';
 import type {
 	CandlePatternType,
 	DetectedCandlePattern,
@@ -627,6 +628,11 @@ export default async function analyzeCandlePatterns(
 			return AnalyzeCandlePatternsOutputSchema.parse(fail(candlesResult.summary, 'internal'));
 		}
 
+		// 上流 get_candles の取得層 warning を取り込む（partial fetch / multi-day 失敗等）。
+		// server.ts の respond() は content を summary より優先するため、summary だけでなく
+		// content[0].text の先頭にも warning を出す必要がある。
+		const upstream = extractUpstreamWarning(candlesResult.meta);
+
 		// 全データを保持（統計計算用）
 		const allCandlesForStats = candlesResult.data.normalized;
 		let allCandles = [...allCandlesForStats];
@@ -745,8 +751,21 @@ export default async function analyzeCandlePatterns(
 		const filteredPatterns = detectedPatterns.filter((p) => p.strength >= MIN_STRENGTH_THRESHOLD);
 
 		// サマリーとコンテント生成（フィルタ後のパターンを使用）
-		const summary = generateSummary(filteredPatterns, formattedWindowCandles);
-		const content = generateContent(filteredPatterns, formattedWindowCandles);
+		const baseSummary = generateSummary(filteredPatterns, formattedWindowCandles);
+		const baseContent = generateContent(filteredPatterns, formattedWindowCandles);
+		// 上流 get_candles の warning を summary と content[0].text の両方の先頭に連結する。
+		// content は server.ts が summary より優先するため、summary だけだと LLM に届かない。
+		const summary = prependWarnings(baseSummary, upstream, { separator: '\n' });
+		const content =
+			baseContent.length > 0
+				? [
+						{
+							type: 'text' as const,
+							text: prependWarnings(baseContent[0].text, upstream, { separator: '\n' }),
+						},
+						...baseContent.slice(1),
+					]
+				: baseContent;
 
 		const data = {
 			pair,
@@ -770,6 +789,7 @@ export default async function analyzeCandlePatterns(
 			patterns_checked: targetPatterns,
 			history_lookback_days: historyLookbackDays,
 			history_horizons: historyHorizons,
+			...(upstream.warning ? { warning: upstream.warning } : {}),
 		};
 
 		const result = {

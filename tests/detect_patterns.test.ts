@@ -123,6 +123,135 @@ describe('detect_patterns handler', () => {
 		expect(text).not.toContain('※形成中は includeForming=true を指定してください。');
 	});
 
+	// ── 上流 warning の伝播（views 切替でも content 先頭に出ること） ──
+
+	it('上流 meta.warning（取得層）が detailed view の content[0].text 先頭に伝播する', async () => {
+		mockedDetectPatterns.mockResolvedValueOnce(
+			asMockResult(
+				okResult({
+					summary: '⚠️ partial fetch (3日中1日の取得に失敗)\nBTC_JPY 日足（1day） 90本から0件を検出',
+					meta: {
+						pair: 'btc_jpy',
+						type: '1day',
+						count: 0,
+						visualization_hints: { preferred_style: 'line', highlight_patterns: [] },
+						debug: { swings: [], candidates: [] },
+						warning: '⚠️ partial fetch (3日中1日の取得に失敗)',
+					},
+				}),
+			),
+		);
+
+		const res = await toolDef.handler({
+			pair: 'btc_jpy',
+			type: '1day',
+			limit: 90,
+			view: 'detailed',
+		});
+
+		const text = (res as { content: Array<{ text: string }> }).content[0].text;
+		expect(text.startsWith('⚠️ partial fetch')).toBe(true);
+	});
+
+	it('上流 meta.warnings（計算層）が summary view の content[0].text 先頭に伝播する', async () => {
+		mockedDetectPatterns.mockResolvedValueOnce(
+			asMockResult(
+				okResult({
+					meta: {
+						pair: 'btc_jpy',
+						type: '1day',
+						count: 0,
+						visualization_hints: { preferred_style: 'line', highlight_patterns: [] },
+						debug: { swings: [], candidates: [] },
+						warnings: ['SMA_200: データ不足', 'Ichimoku: データ不足'],
+					},
+				}),
+			),
+		);
+
+		const res = await toolDef.handler({
+			pair: 'btc_jpy',
+			type: '1day',
+			limit: 90,
+			view: 'summary',
+		});
+
+		const text = (res as { content: Array<{ text: string }> }).content[0].text;
+		expect(text.startsWith('⚠️ SMA_200: データ不足')).toBe(true);
+		expect(text).toContain('⚠️ Ichimoku: データ不足');
+	});
+
+	it('上流 warning と warnings 両方が full view の content[0].text 先頭に並ぶ', async () => {
+		mockedDetectPatterns.mockResolvedValueOnce(
+			asMockResult(
+				okResult({
+					meta: {
+						pair: 'btc_jpy',
+						type: '1day',
+						count: 0,
+						visualization_hints: { preferred_style: 'line', highlight_patterns: [] },
+						debug: { swings: [], candidates: [] },
+						warning: '⚠️ partial fetch (multi-year)',
+						warnings: ['SMA_200: データ不足'],
+					},
+				}),
+			),
+		);
+
+		const res = await toolDef.handler({
+			pair: 'btc_jpy',
+			type: '1day',
+			limit: 90,
+			view: 'full',
+		});
+
+		const text = (res as { content: Array<{ text: string }> }).content[0].text;
+		const lines = text.split('\n');
+		expect(lines[0]).toContain('⚠️ partial fetch (multi-year)');
+		expect(lines[1]).toContain('⚠️ SMA_200: データ不足');
+	});
+
+	it('上流 warning が debug view の content[0].text 先頭にも伝播する', async () => {
+		mockedDetectPatterns.mockResolvedValueOnce(
+			asMockResult(
+				okResult({
+					meta: {
+						pair: 'btc_jpy',
+						type: '1day',
+						count: 0,
+						visualization_hints: { preferred_style: 'line', highlight_patterns: [] },
+						debug: { swings: [], candidates: [] },
+						warning: '⚠️ partial fetch',
+					},
+				}),
+			),
+		);
+
+		const res = await toolDef.handler({
+			pair: 'btc_jpy',
+			type: '1day',
+			limit: 90,
+			view: 'debug',
+		});
+
+		const text = (res as { content: Array<{ text: string }> }).content[0].text;
+		expect(text.startsWith('⚠️ partial fetch')).toBe(true);
+	});
+
+	it('上流 warning が無い場合は content[0].text に ⚠️ が含まれない', async () => {
+		mockedDetectPatterns.mockResolvedValueOnce(asMockResult(okResult()));
+
+		const res = await toolDef.handler({
+			pair: 'btc_jpy',
+			type: '1day',
+			limit: 90,
+			view: 'detailed',
+		});
+
+		const text = (res as { content: Array<{ text: string }> }).content[0].text;
+		expect(text.includes('⚠️')).toBe(false);
+	});
+
 	it('debug view でも warnings と statistics を structuredContent.data に保持するべき', async () => {
 		const warnings = [
 			{
