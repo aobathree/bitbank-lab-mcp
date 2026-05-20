@@ -397,7 +397,12 @@ export const RenderChartSvgOutputSchema = z.object({
 			sizeBytes: z.number().optional(),
 			layerCount: z.number().optional(),
 			fallback: z.string().optional(),
+			// 上流 analyze_indicators から伝播する取得層 warning（partial fetch 等）
+			warning: z.string().optional(),
+			// 上流 analyze_indicators から伝播する計算層 warnings（指標バー数不足 等）
 			warnings: z.array(z.string()).optional(),
+			// レンダリング層独自の警告（雲のデータ不足等）
+			renderWarnings: z.array(z.string()).optional(),
 		})
 		.optional(),
 });

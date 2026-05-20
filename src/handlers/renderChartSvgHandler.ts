@@ -1,6 +1,7 @@
 import type { z } from 'zod';
 import { failFromValidation } from '../../lib/result.js';
 import { ensurePair } from '../../lib/validate.js';
+import { prependWarnings } from '../../lib/warning-propagation.js';
 import renderChartSvg from '../../tools/render_chart_svg.js';
 import { RenderChartSvgInputSchema, RenderChartSvgOutputSchema } from '../schemas.js';
 import type { ToolDefinition } from '../tool-definition.js';
@@ -23,8 +24,22 @@ export const toolDef: ToolDefinition = {
 		const pair = String(meta.pair || (args as Record<string, unknown>).pair || 'pair').toUpperCase();
 		const type = String(meta.type || (args as Record<string, unknown>).type || '1day');
 
+		// 上流 warning（取得層 / 計算層）。LLM が summary だけ見ても不完全性に気づけるよう
+		// content 先頭に必ず連結する。
+		const upstream = {
+			warning: meta.warning as string | undefined,
+			warnings: meta.warnings as string[] | undefined,
+		};
+		// レンダリング層独自の警告（雲不足等）。上流とは別系統。
+		const renderWarnings = meta.renderWarnings as string[] | undefined;
+		const renderWarningBlock =
+			renderWarnings && renderWarnings.length > 0
+				? `\n${renderWarnings.map((w) => (w.startsWith('⚠️') ? w : `⚠️ ${w}`)).join('\n')}`
+				: '';
+
 		if (!('svg' in data) || !data.svg) {
-			const txt = String(parsed.summary || 'chart rendered (no svg)');
+			const baseTxt = String(parsed.summary || 'chart rendered (no svg)');
+			const txt = prependWarnings(baseTxt, upstream, { separator: '\n' }) + renderWarningBlock;
 			return { content: [{ type: 'text', text: txt }], structuredContent: parsed as Record<string, unknown> };
 		}
 
@@ -32,7 +47,7 @@ export const toolDef: ToolDefinition = {
 		const id = String(meta.identifier || `${pair}-${type}-${Date.now()}`);
 		const ttl = String(meta.title || `${pair} ${type} chart`);
 		const range = meta.range as { start?: string; end?: string } | undefined;
-		const rangeLine = range ? `Period: ${range.start} \u2013 ${range.end}` : '';
+		const rangeLine = range ? `Period: ${range.start} – ${range.end}` : '';
 		const indicators = meta.indicators as string[] | undefined;
 		const indLine = Array.isArray(indicators) && indicators.length ? `Indicators: ${indicators.join(', ')}` : '';
 		const legendLines =
@@ -42,7 +57,8 @@ export const toolDef: ToolDefinition = {
 						.join(' / ')
 				: '';
 
-		const summary = [`${pair} ${type} chart`, rangeLine, indLine, legendLines].filter(Boolean).join(' | ');
+		const baseSummary = [`${pair} ${type} chart`, rangeLine, indLine, legendLines].filter(Boolean).join(' | ');
+		const summary = prependWarnings(baseSummary, upstream, { separator: '\n' });
 
 		const svgBlock = [
 			'',
@@ -54,8 +70,9 @@ export const toolDef: ToolDefinition = {
 			String(data.svg),
 		].join('\n');
 
+		// 自前 renderWarnings は SVG block の直前に別行で表示する（ユーザーへの可視性確保）。
 		return {
-			content: [{ type: 'text', text: summary + svgBlock }],
+			content: [{ type: 'text', text: summary + renderWarningBlock + svgBlock }],
 			structuredContent: {
 				...(parsed as Record<string, unknown>),
 				artifactHint: {

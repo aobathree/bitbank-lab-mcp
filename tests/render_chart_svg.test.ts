@@ -35,7 +35,7 @@ function buildSeries(length: number, offset = 0): Array<number | null> {
 	return Array.from({ length }, (_, i) => 100 + i + offset);
 }
 
-function buildSuccess(length: number) {
+function buildSuccess(length: number, metaExtras: Record<string, unknown> = {}) {
 	return {
 		ok: true as const,
 		summary: 'ok',
@@ -78,8 +78,20 @@ function buildSuccess(length: number) {
 				meta: { pastBuffer: 0, shift: 26 },
 			},
 		},
-		meta: { pair: 'btc_jpy', type: '1day' },
+		meta: { pair: 'btc_jpy', type: '1day', ...metaExtras },
 	};
+}
+
+/** ICHIMOKU 用に spanA/spanB のうち末尾 partialNullCount 本を null にして雲不足を再現する */
+function buildIchimokuWithPartialCloud(length: number, partialNullCount: number) {
+	const base = buildSuccess(length);
+	const spanA = base.data.chart.indicators.ICHI_spanA as Array<number | null>;
+	const spanB = base.data.chart.indicators.ICHI_spanB as Array<number | null>;
+	for (let i = length - partialNullCount; i < length; i++) {
+		spanA[i] = null;
+		spanB[i] = null;
+	}
+	return base;
 }
 
 describe('render_chart_svg', () => {
@@ -419,6 +431,131 @@ describe('render_chart_svg', () => {
 		});
 		assertOk(res);
 		expect(res.data.svg).toBeDefined();
+	});
+
+	// ── 上流 warning 伝播 ────────────────────────────────
+
+	it('上流 meta.warning を meta.warning と summary 先頭に伝播', async () => {
+		mockedAnalyze.mockResolvedValueOnce(
+			asMockResult(
+				buildSuccess(60, {
+					warning: 'partial fetch: 2024-01-15 / 2024-01-16 を取得できませんでした',
+				}),
+			),
+		);
+		const res = await renderChartSvg({ pair: 'btc_jpy', type: '1day', limit: 60 });
+		assertOk(res);
+		expect(res.meta.warning).toBe('partial fetch: 2024-01-15 / 2024-01-16 を取得できませんでした');
+		expect(res.summary.startsWith('⚠️')).toBe(true);
+		expect(res.summary).toContain('partial fetch');
+	});
+
+	it('上流 meta.warnings を meta.warnings として保持し summary 先頭に伝播', async () => {
+		mockedAnalyze.mockResolvedValueOnce(
+			asMockResult(
+				buildSuccess(60, {
+					warnings: ['SMA_200: データ不足', 'EMA_200: データ不足'],
+				}),
+			),
+		);
+		const res = await renderChartSvg({ pair: 'btc_jpy', type: '1day', limit: 60 });
+		assertOk(res);
+		expect(res.meta.warnings).toEqual(['SMA_200: データ不足', 'EMA_200: データ不足']);
+		expect(res.summary).toContain('SMA_200: データ不足');
+		expect(res.summary).toContain('EMA_200: データ不足');
+	});
+
+	it('上流 warning / warnings を両方伝播', async () => {
+		mockedAnalyze.mockResolvedValueOnce(
+			asMockResult(
+				buildSuccess(60, {
+					warning: 'multi-day fetch partial',
+					warnings: ['SMA_200: データ不足'],
+				}),
+			),
+		);
+		const res = await renderChartSvg({ pair: 'btc_jpy', type: '1day', limit: 60 });
+		assertOk(res);
+		expect(res.meta.warning).toBe('multi-day fetch partial');
+		expect(res.meta.warnings).toEqual(['SMA_200: データ不足']);
+		expect(res.summary).toContain('multi-day fetch partial');
+		expect(res.summary).toContain('SMA_200: データ不足');
+	});
+
+	it('上流 warning が無ければ meta.warning は付かず summary 先頭は通常通り', async () => {
+		mockedAnalyze.mockResolvedValueOnce(asMockResult(buildSuccess(60)));
+		const res = await renderChartSvg({ pair: 'btc_jpy', type: '1day', limit: 60 });
+		assertOk(res);
+		expect(res.meta.warning).toBeUndefined();
+		expect(res.meta.warnings).toBeUndefined();
+		expect(res.summary.startsWith('⚠️')).toBe(false);
+	});
+
+	// ── renderWarnings（自前レンダリング層）───────────────
+
+	it('雲不足の自前警告は meta.renderWarnings に入り meta.warnings には混入しない', async () => {
+		// spanA/spanB の末尾を null にして雲のカバー率を 80% 未満に落とす
+		mockedAnalyze.mockResolvedValueOnce(asMockResult(buildIchimokuWithPartialCloud(90, 55)));
+		const res = await renderChartSvg({ pair: 'btc_jpy', type: '1day', limit: 60, indicators: ['ICHIMOKU'] });
+		assertOk(res);
+		expect(Array.isArray(res.meta.renderWarnings)).toBe(true);
+		expect((res.meta.renderWarnings as string[]).some((w: string) => w.includes('雲のカバー率'))).toBe(true);
+		// 上流 warnings には混入していない（雲不足は自前カテゴリ）
+		expect(res.meta.warnings).toBeUndefined();
+	});
+
+	it('spanB 全 null で「先行スパンB のデータが不足」が renderWarnings に入る', async () => {
+		mockedAnalyze.mockResolvedValueOnce(asMockResult(buildIchimokuWithPartialCloud(90, 90)));
+		const res = await renderChartSvg({ pair: 'btc_jpy', type: '1day', limit: 60, indicators: ['ICHIMOKU'] });
+		assertOk(res);
+		expect((res.meta.renderWarnings as string[]).some((w: string) => w.includes('先行スパンB'))).toBe(true);
+	});
+
+	it('上流 warnings と renderWarnings は別フィールドとして同時に保持される', async () => {
+		const mocked = buildIchimokuWithPartialCloud(90, 55);
+		mocked.meta = { ...mocked.meta, warnings: ['SMA_200: データ不足'] };
+		mockedAnalyze.mockResolvedValueOnce(asMockResult(mocked));
+		const res = await renderChartSvg({ pair: 'btc_jpy', type: '1day', limit: 60, indicators: ['ICHIMOKU'] });
+		assertOk(res);
+		expect(res.meta.warnings).toEqual(['SMA_200: データ不足']);
+		expect((res.meta.renderWarnings as string[]).some((w: string) => w.includes('雲のカバー率'))).toBe(true);
+	});
+
+	// ── handler 経由での warning 伝播 ────────────────────
+
+	it('handler 経由でも content[0].text 先頭に上流 warning が含まれる', async () => {
+		mockedAnalyze.mockResolvedValueOnce(
+			asMockResult(
+				buildSuccess(60, {
+					warning: 'partial fetch detected',
+					warnings: ['SMA_200: データ不足'],
+				}),
+			),
+		);
+		const res = (await toolDef.handler({ pair: 'btc_jpy', type: '1day', limit: 60 })) as {
+			content: Array<{ type: string; text: string }>;
+		};
+		const text = res.content[0].text;
+		expect(text.startsWith('⚠️')).toBe(true);
+		expect(text).toContain('partial fetch detected');
+		expect(text).toContain('SMA_200: データ不足');
+	});
+
+	it('handler 経由で renderWarnings が SVG block 直前に表示される', async () => {
+		mockedAnalyze.mockResolvedValueOnce(asMockResult(buildIchimokuWithPartialCloud(90, 55)));
+		const res = (await toolDef.handler({
+			pair: 'btc_jpy',
+			type: '1day',
+			limit: 60,
+			indicators: ['ICHIMOKU'],
+		})) as { content: Array<{ type: string; text: string }> };
+		const text = res.content[0].text;
+		const cloudIdx = text.indexOf('雲のカバー率');
+		const svgIdx = text.indexOf('--- Chart SVG ---');
+		expect(cloudIdx).toBeGreaterThan(-1);
+		expect(svgIdx).toBeGreaterThan(-1);
+		// renderWarnings は SVG block より前に出る
+		expect(cloudIdx).toBeLessThan(svgIdx);
 	});
 
 	// ── toolDef.handler ──────────────────────────────────

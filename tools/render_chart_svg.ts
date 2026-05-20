@@ -27,6 +27,7 @@ import { dayjs } from '../lib/datetime.js';
 import { formatPair } from '../lib/formatter.js';
 import { ICHIMOKU_MIN_BARS_FOR_CLOUD, ICHIMOKU_SHIFT } from '../lib/indicator-config.js';
 import { fail, ok } from '../lib/result.js';
+import { extractUpstreamWarning, prependWarnings } from '../lib/warning-propagation.js';
 import type { CandleType, ChartPayload, Pair, RenderChartSvgOptions, Result } from '../src/schemas.js';
 import analyzeIndicators from './analyze_indicators.js';
 
@@ -73,7 +74,12 @@ type RenderMeta = {
 	layerCount?: number;
 	truncated?: boolean;
 	fallback?: string;
+	/** 上流 analyze_indicators の取得層 warning（partial fetch / multi-day 失敗 等） */
+	warning?: string;
+	/** 上流 analyze_indicators の計算層 warnings（指標バー数不足 等） */
 	warnings?: string[];
+	/** レンダリング層独自の警告（雲のデータ不足等）。上流 warnings と別系統。 */
+	renderWarnings?: string[];
 	debug?: Record<string, unknown>;
 };
 
@@ -160,7 +166,8 @@ export default async function renderChartSvg(
 	// ★ データ取得はバッファ計算をgetIndicatorsに任せる
 	// 一目均衡表の雲を適切に表示するには limit >= 60 が必要（先行スパンB: 52期間 + シフト: 26日）
 	const ichimokuMinLimit = ICHIMOKU_MIN_BARS_FOR_CLOUD;
-	const warnings: string[] = [];
+	// レンダリング層（雲不足等）の自前 warning。上流 warnings とは別系統。
+	const renderWarnings: string[] = [];
 
 	// 一目均衡表使用時に limit が小さすぎる場合は自動調整
 	let effectiveLimit = limit;
@@ -177,6 +184,12 @@ export default async function renderChartSvg(
 			res?.meta?.errorType || 'internal',
 		);
 	}
+
+	// 上流 analyze_indicators の meta を取り込む。
+	// - res.meta.warning  → 取得層（get_candles の multi-year/multi-day 部分失敗等）
+	// - res.meta.warnings → 計算層（SMA_200 がデータ不足等）
+	// この 2 系統は renderWarnings（雲不足等のレンダリング層）と混ぜずに別系統で保持する。
+	const upstream = extractUpstreamWarning(res.meta);
 
 	const chartData = res.data?.chart as ChartPayload;
 	const items = chartData?.candles || [];
@@ -202,12 +215,12 @@ export default async function renderChartSvg(
 		const spanBValidCount = spanB?.filter((v) => v !== null)?.length ?? 0;
 
 		if (spanBValidCount === 0) {
-			warnings.push('先行スパンBのデータが不足しています。雲が描画されません。');
+			renderWarnings.push('先行スパンBのデータが不足しています。雲が描画されません。');
 		} else if (spanAValidCount < effectiveLimit || spanBValidCount < effectiveLimit) {
 			const cloudCoverage = Math.min(spanAValidCount, spanBValidCount);
 			const coveragePct = Math.round((cloudCoverage / effectiveLimit) * 100);
 			if (coveragePct < 80) {
-				warnings.push(`雲のカバー率: ${coveragePct}%（${cloudCoverage}/${effectiveLimit}本）。`);
+				renderWarnings.push(`雲のカバー率: ${coveragePct}%（${cloudCoverage}/${effectiveLimit}本）。`);
 			}
 		}
 	}
@@ -780,7 +793,10 @@ ${priceLine}
 		layerCount,
 		...(identifier ? { identifier } : {}),
 		...(title ? { title } : {}),
-		...(warnings.length > 0 ? { warnings } : {}),
+		// 上流 warning（取得層）/ warnings（計算層）を別系統で伝播
+		...upstream,
+		// 自前のレンダリング層警告（雲不足等）。上流とは別フィールドで保持。
+		...(renderWarnings.length > 0 ? { renderWarnings } : {}),
 	};
 	if (debugEnabled) {
 		metaBase.debug = {
@@ -791,9 +807,13 @@ ${priceLine}
 		};
 	}
 
-	const summary = summaryNotes.length
+	const baseSummary = summaryNotes.length
 		? `${formatPair(pair)} ${type} chart rendered (${summaryNotes.join('; ')})`
 		: `${formatPair(pair)} ${type} chart rendered`;
+	// summary 先頭に上流 warning / warnings を別行で連結する（取得層 / 計算層を別系統で）。
+	// renderWarnings はレンダリング層の独立 channel なので summary には混ぜず meta だけで返す
+	// （handler 側で SVG block の前に別表示する）。
+	const summary = prependWarnings(baseSummary, upstream, { separator: '\n' });
 
 	return ok<RenderData, RenderMeta>(summary, { svg: finalSvg, legend: legendMeta }, metaBase);
 }
