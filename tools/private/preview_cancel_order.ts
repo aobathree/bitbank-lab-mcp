@@ -1,13 +1,15 @@
 /**
- * preview_cancel_order — 注文キャンセルのプレビューと確認トークン発行。
+ * preview_cancel_order — 注文キャンセルのプレビュー。
  *
- * キャンセル対象の注文情報を表示し、cancel_order に渡す確認トークンを発行する。
- * 実際のキャンセルは行わない。
+ * キャンセル対象の注文情報を表示する。実際のキャンセルは行わない。
  *
- * elicitation 対応ホストでは preview → ユーザー確認 → cancel_order までを
- * このハンドラ内で完結させる（LLM から見ると preview_cancel_order 1 回呼び出しで
- * キャンセル完了）。非対応ホストでは従来通り structuredContent 経由でトークンを
- * 渡しフォールバックする（Progressive Enhancement）。
+ * 内部的に confirmation_token も生成するが、これはサーバープロセス内に閉じる:
+ *   - elicitation 対応ホスト: ハンドラ内の accept 経路で cancel_order へ非公開のまま
+ *     引き渡し、preview → ユーザー確認 → cancel_order までを完結させる
+ *   - elicitation 非対応ホスト: キャンセル実行は行わずプレビューのみ返し、token は
+ *     クライアントに渡さない
+ *
+ * 詳細は docs/private-api.md「`confirmation_token` の受け渡し」節を参照。
  */
 
 import { formatOrderPositionLabel, formatPair, formatPrice } from '../../lib/formatter.js';
@@ -80,13 +82,16 @@ export default async function previewCancelOrder(args: { pair: string; order_id:
 export const toolDef: ToolDefinition = {
 	name: 'preview_cancel_order',
 	description: [
-		'[Preview Cancel Order] 注文キャンセルのプレビューと確認トークン発行。実際のキャンセルは行わない。Private API。',
-		'cancel_order を実行するには、まずこのツールで確認トークンを取得する必要がある。',
-		'⚠️ confirmation_token は LLM 可視テキストには含めない。ホスト UI または elicitation のユーザー確認を経て cancel_order が呼ばれる前提。LLM が独断でトークンを引用して cancel_order を呼ぶと意図しないキャンセルになり得る。',
+		'[Preview Cancel Order] 注文キャンセルのプレビュー。実際のキャンセルは行わない。Private API。',
+		'⚠️ confirmation_token はクライアント側には返さない（content / structuredContent / _meta のいずれにも含めない）。',
+		'実際のキャンセルは elicitation 対応ホストでのみ可能で、その場合はこのハンドラ内で preview → ユーザー確認 → cancel_order までを完結させる。',
+		'elicitation 非対応ホストではプレビュー内容のみ返し、キャンセル実行は受け付けない。',
 	].join(' '),
 	inputSchema: PreviewCancelOrderInputSchema,
 	// MCP Apps (SEP-1865): 対応ホストでは iframe 内にキャンセル確認 UI を表示する。
-	// 非対応ホストでは無視され、従来のテキスト確認フローがそのまま動作する（Progressive Enhancement）。
+	// 非対応ホストでは無視される（Progressive Enhancement）。
+	// 注: 本 PR 時点では UI 側からの cancel_order 経路は未実装（pending action store と
+	// UI origin 検証の安全設計を別 PR で整備するまで token を UI に渡さない）。
 	_meta: {
 		ui: {
 			resourceUri: 'ui://cancel/confirm.html',
@@ -97,37 +102,49 @@ export const toolDef: ToolDefinition = {
 		const result = await previewCancelOrder(typedArgs);
 		if (!result.ok) return result;
 
-		// フォールバック: confirmation_token は LLM 可視テキストには含めず、
-		// structuredContent 側にだけ残す。SEP-1865 UI ボタンや Inspector はこちらを参照する。
+		// クライアントに返す structuredContent から confirmation_token / expires_at を除外する。
+		// これらは内部利用専用で、elicitation accept 経路のサーバープロセス内に閉じる。
+		const sanitizedData: Record<string, unknown> = { ...result.data };
+		delete sanitizedData.confirmation_token;
+		delete sanitizedData.expires_at;
+		const sanitizedStructured = toStructured({
+			ok: result.ok,
+			summary: result.summary,
+			data: sanitizedData,
+			meta: result.meta,
+		});
+
+		// elicitation 非対応ホスト向けのフォールバックレスポンス。
+		// キャンセル実行はこのホストでは行えない旨を明示し、トークンの存在は仄めかさない。
 		const fallbackText = [
 			result.summary,
 			'',
-			'※ confirmation_token はホスト UI / structuredContent 経由でのみ受け渡されます。',
-			'  LLM はトークンを引用したり、ユーザー確認なしに cancel_order を呼ばないでください。',
+			'※ このホストでは取引実行に対応していません。',
+			'  実際にキャンセルするには、elicitation 対応クライアント（Claude Desktop など）で同じ操作を実行してください。',
 		].join('\n');
-		const previewStructured = toStructured(result);
 
 		// elicitation 対応ホストでは preview → ユーザー確認 → cancel_order までを
-		// このハンドラ内で完結させる。
+		// このハンドラ内で完結させる。confirmation_token はサーバープロセス内に閉じる。
 		return withElicitedConfirmation({
 			extra,
 			summary: result.summary,
 			confirmTitle: 'この注文をキャンセルする',
 			// 内部的に cancel_order を実行。監査ログには route='elicitation' で記録される。
+			// confirmation_token / expires_at は previewCancelOrder() が必ず生成するため non-null 断定して渡す。
 			onConfirmed: () =>
 				cancelOrder(
 					{
 						...typedArgs,
-						confirmation_token: result.data.confirmation_token,
-						token_expires_at: result.data.expires_at,
+						confirmation_token: result.data.confirmation_token!,
+						token_expires_at: result.data.expires_at!,
 					},
 					'elicitation',
 				),
 			onDeclinedText: 'ユーザーがキャンセル操作を取り消しました（elicitation）',
-			declinedStructured: previewStructured,
+			declinedStructured: sanitizedStructured,
 			fallback: {
 				content: [{ type: 'text', text: fallbackText }],
-				structuredContent: previewStructured,
+				structuredContent: sanitizedStructured,
 			},
 		});
 	},

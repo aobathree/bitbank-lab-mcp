@@ -63,10 +63,11 @@ describe('preview_cancel_order', () => {
 		const result = await previewCancelOrder({ pair: 'btc_jpy', order_id: 2001 });
 
 		assertOk(result);
+		// confirmation_token / expires_at はスキーマ上 optional だが、内部関数 previewCancelOrder() は必ず生成する
 		expect(result.data.confirmation_token).toBeTypeOf('string');
-		expect(result.data.confirmation_token.length).toBeGreaterThan(0);
+		expect(result.data.confirmation_token!.length).toBeGreaterThan(0);
 		expect(result.data.expires_at).toBeTypeOf('number');
-		expect(result.data.expires_at).toBeGreaterThan(Date.now());
+		expect(result.data.expires_at!).toBeGreaterThan(Date.now());
 	});
 
 	it('summary にペア名（BTC/JPY）と注文IDが含まれる', async () => {
@@ -261,21 +262,26 @@ describe('preview_cancel_order — handler (toolDef)', () => {
 		expect(content[0]).toHaveProperty('text');
 	});
 
-	it('elicitation 非対応ホストでは confirmation_token を content[0].text に出さない', async () => {
+	it('elicitation 非対応ホストでは confirmation_token / expires_at を一切返さない', async () => {
 		mockGetOrderOnce();
 		const { toolDef } = await import('../../tools/private/preview_cancel_order.js');
 		const result = (await toolDef.handler({ pair: 'btc_jpy', order_id: 2001 })) as {
 			content: { text: string }[];
-			structuredContent: { data?: { confirmation_token?: string } };
+			structuredContent: {
+				data?: { confirmation_token?: string; expires_at?: number; preview?: Record<string, unknown> };
+			};
 		};
 
 		const text = result.content[0]?.text ?? '';
-		const token = result.structuredContent?.data?.confirmation_token;
-		expect(token).toBeTypeOf('string');
-		expect((token as string).length).toBeGreaterThan(0);
-		expect(text).not.toContain(token as string);
-		expect(text).toContain('confirmation_token');
-		expect(text).toContain('ホスト UI');
+		const data = result.structuredContent?.data;
+		// structuredContent.data.preview は残るが confirmation_token / expires_at は含まれない
+		expect(data?.preview).toBeDefined();
+		expect(data?.confirmation_token).toBeUndefined();
+		expect(data?.expires_at).toBeUndefined();
+		// content[0].text にもトークン文字列・「confirmation_token」表記を出さない
+		expect(text).not.toContain('confirmation_token');
+		// 実行不可通知の案内文があること
+		expect(text).toContain('このホストでは取引実行に対応していません');
 	});
 
 	it('elicitation 対応ホストで accept されると cancel_order まで実行される', async () => {
@@ -335,9 +341,13 @@ describe('preview_cancel_order — handler (toolDef)', () => {
 		const { toolDef } = await import('../../tools/private/preview_cancel_order.js');
 		const result = (await toolDef.handler({ pair: 'btc_jpy', order_id: 2001 }, { server: fakeServer })) as {
 			content: { text: string }[];
+			structuredContent: { data?: { confirmation_token?: string; expires_at?: number } };
 		};
 
 		expect(result.content[0]?.text).toContain('取り消し');
+		// decline 時の structuredContent にも confirmation_token / expires_at は含まれない
+		expect(result.structuredContent?.data?.confirmation_token).toBeUndefined();
+		expect(result.structuredContent?.data?.expires_at).toBeUndefined();
 		// fetch は get_order の 1 回のみ。cancel_order は呼ばれていない。
 		expect(fetchMock.mock.calls).toHaveLength(1);
 	});

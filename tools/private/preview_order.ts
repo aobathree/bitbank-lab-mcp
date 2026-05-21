@@ -1,8 +1,13 @@
 /**
- * preview_order — 注文プレビューと確認トークン発行。
+ * preview_order — 注文プレビュー。
  *
- * 注文パラメータのバリデーションを行い、プレビューを表示し、
- * create_order に渡す確認トークンを発行する。実際の発注は行わない。
+ * 注文パラメータのバリデーションを行い、プレビューを表示する。実際の発注は行わない。
+ *
+ * 内部的に confirmation_token も生成するが、これはサーバープロセス内に閉じる:
+ *   - elicitation 対応ホスト: ハンドラ内の accept 経路で create_order へ非公開のまま引き渡す
+ *   - elicitation 非対応ホスト: 取引実行は行わずプレビューのみ返し、token はクライアントに渡さない
+ *
+ * 詳細は docs/private-api.md「`confirmation_token` の受け渡し」節を参照。
  */
 
 import { formatPair, formatPrice } from '../../lib/formatter.js';
@@ -188,16 +193,19 @@ export default async function previewOrder(args: {
 export const toolDef: ToolDefinition = {
 	name: 'preview_order',
 	description: [
-		'[Preview Order] 注文内容をプレビューし確認トークンを発行する。実際の発注は行わない。Private API。',
-		'create_order を実行するには、まずこのツールで確認トークンを取得する必要がある。',
+		'[Preview Order] 注文内容をプレビューする。実際の発注は行わない。Private API。',
 		'バリデーション（パラメータチェック、トリガー価格チェック）もここで実施する。',
 		'対応注文タイプは limit / market / stop / stop_limit の 4 種類のみ（take_profit / stop_loss / losscut は未対応）。',
 		'position_side を指定すると信用注文として扱う（ロング新規=buy+long, ロング決済=sell+long, ショート新規=sell+short, ショート決済=buy+short）。',
-		'⚠️ confirmation_token は LLM 可視テキストには含めない。ホスト UI または elicitation のユーザー確認を経て create_order が呼ばれる前提。LLM が独断でトークンを引用して create_order を呼ぶと二重発注になり得る。',
+		'⚠️ confirmation_token はクライアント側には返さない（content / structuredContent / _meta のいずれにも含めない）。',
+		'実際の発注は elicitation 対応ホストでのみ可能で、その場合はこのハンドラ内で preview → ユーザー確認 → create_order までを完結させる。',
+		'elicitation 非対応ホストではプレビュー内容のみ返し、取引実行は受け付けない。',
 	].join(' '),
 	inputSchema: PreviewOrderInputSchema,
 	// MCP Apps (SEP-1865): 対応ホストでは iframe 内に注文確認 UI を表示する。
-	// 非対応ホストでは無視され、従来のテキスト確認フローがそのまま動作する（Progressive Enhancement）。
+	// 非対応ホストでは無視される（Progressive Enhancement）。
+	// 注: 本 PR 時点では UI 側からの create_order 経路は未実装（pending action store と
+	// UI origin 検証の安全設計を別 PR で整備するまで token を UI に渡さない）。
 	_meta: {
 		ui: {
 			resourceUri: 'ui://order/confirm.html',
@@ -217,38 +225,51 @@ export const toolDef: ToolDefinition = {
 		const result = await previewOrder(typedArgs);
 		if (!result.ok) return result;
 
-		// フォールバック: confirmation_token は LLM 可視テキストには含めず、
-		// structuredContent 側にだけ残す。SEP-1865 UI ボタンや Inspector はこちらを参照する。
+		// クライアントに返す structuredContent から confirmation_token / expires_at を除外する。
+		// これらは内部利用専用で、elicitation accept 経路のサーバープロセス内に閉じる。
+		const sanitizedData: Record<string, unknown> = { ...result.data };
+		delete sanitizedData.confirmation_token;
+		delete sanitizedData.expires_at;
+		const sanitizedStructured = toStructured({
+			ok: result.ok,
+			summary: result.summary,
+			data: sanitizedData,
+			meta: result.meta,
+		});
+
+		// elicitation 非対応ホスト向けのフォールバックレスポンス。
+		// 取引実行はこのホストでは行えない旨を明示し、トークンの存在は仄めかさない。
 		const fallbackText = [
 			result.summary,
 			'',
-			'※ confirmation_token はホスト UI / structuredContent 経由でのみ受け渡されます。',
-			'  LLM はトークンを引用したり、ユーザー確認なしに create_order を呼ばないでください。',
+			'※ このホストでは取引実行に対応していません。',
+			'  実際に発注するには、elicitation 対応クライアント（Claude Desktop など）で同じ操作を実行してください。',
 		].join('\n');
-		const previewStructured = toStructured(result);
 
 		// elicitation 対応ホストでは preview → ユーザー確認 → create_order までを
 		// このハンドラ内で完結させる（LLM から見ると preview_order 1 回呼び出しで発注完了）。
-		// 非対応ホストでは従来通り structuredContent 経由でトークンを渡しフォールバックする。
+		// confirmation_token はサーバープロセス内に閉じ、クライアントには返らない。
 		return withElicitedConfirmation({
 			extra,
 			summary: result.summary,
 			confirmTitle: 'この注文を発注する',
 			// 内部的に create_order を実行。監査ログには route='elicitation' で記録される。
+			// confirmation_token / expires_at は previewOrder() が必ず生成するため non-null 断定して渡す
+			// （スキーマ上は optional だが内部生成のみで undefined にはならない）。
 			onConfirmed: () =>
 				createOrder(
 					{
 						...typedArgs,
-						confirmation_token: result.data.confirmation_token,
-						token_expires_at: result.data.expires_at,
+						confirmation_token: result.data.confirmation_token!,
+						token_expires_at: result.data.expires_at!,
 					},
 					'elicitation',
 				),
 			onDeclinedText: 'ユーザーが発注をキャンセルしました（elicitation）',
-			declinedStructured: previewStructured,
+			declinedStructured: sanitizedStructured,
 			fallback: {
 				content: [{ type: 'text', text: fallbackText }],
-				structuredContent: previewStructured,
+				structuredContent: sanitizedStructured,
 			},
 		});
 	},

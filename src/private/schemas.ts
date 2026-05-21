@@ -693,7 +693,7 @@ const OrderResponseSchema = z.object({
 
 export type OrderResponse = z.infer<typeof OrderResponseSchema>;
 
-// ── preview_order（注文プレビュー・確認トークン発行） ──
+// ── preview_order（注文プレビュー） ──
 
 export const PreviewOrderInputSchema = z
 	.object({
@@ -713,11 +713,21 @@ export const PreviewOrderInputSchema = z
 				'⚠️ 信用取引です。損失が保証金を超える可能性があります',
 		),
 	})
-	.describe('注文内容をプレビューし、確認トークンを発行する。実際の発注は行わない');
+	.describe('注文内容をプレビューする。実際の発注は行わない');
 
 export const PreviewOrderDataSchema = z.object({
-	confirmation_token: z.string().describe('create_order に渡す確認トークン'),
-	expires_at: z.number().describe('トークン有効期限（unix ms）'),
+	confirmation_token: z
+		.string()
+		.optional()
+		.describe(
+			'内部利用専用。preview ハンドラ内の elicitation accept 経路で create_order に渡すために生成するが、クライアント返却 structuredContent には含めない',
+		),
+	expires_at: z
+		.number()
+		.optional()
+		.describe(
+			'内部利用専用。confirmation_token と対になる有効期限（unix ms）。クライアント返却 structuredContent には含めない',
+		),
 	preview: z.object({
 		pair: z.string(),
 		amount: z.string(),
@@ -793,7 +803,7 @@ export const CreateOrderOutputSchema = z.union([
 	PrivateFailResultSchema,
 ]);
 
-// ── preview_cancel_order（キャンセルプレビュー・確認トークン発行） ──
+// ── preview_cancel_order（キャンセルプレビュー） ──
 
 export const PreviewCancelOrderInputSchema = z.object({
 	pair: z.string().describe('通貨ペア（例: btc_jpy）'),
@@ -801,8 +811,18 @@ export const PreviewCancelOrderInputSchema = z.object({
 });
 
 export const PreviewCancelOrderDataSchema = z.object({
-	confirmation_token: z.string().describe('cancel_order に渡す確認トークン'),
-	expires_at: z.number().describe('トークン有効期限（unix ms）'),
+	confirmation_token: z
+		.string()
+		.optional()
+		.describe(
+			'内部利用専用。preview ハンドラ内の elicitation accept 経路で cancel_order に渡すために生成するが、クライアント返却 structuredContent には含めない',
+		),
+	expires_at: z
+		.number()
+		.optional()
+		.describe(
+			'内部利用専用。confirmation_token と対になる有効期限（unix ms）。クライアント返却 structuredContent には含めない',
+		),
 	preview: z.object({
 		pair: z.string(),
 		order_id: z.number(),
@@ -855,7 +875,7 @@ export const CancelOrderOutputSchema = z.union([
 	PrivateFailResultSchema,
 ]);
 
-// ── preview_cancel_orders（一括キャンセルプレビュー・確認トークン発行） ──
+// ── preview_cancel_orders（一括キャンセルプレビュー） ──
 
 export const PreviewCancelOrdersInputSchema = z.object({
 	pair: z.string().describe('通貨ペア（例: btc_jpy）'),
@@ -863,8 +883,18 @@ export const PreviewCancelOrdersInputSchema = z.object({
 });
 
 export const PreviewCancelOrdersDataSchema = z.object({
-	confirmation_token: z.string().describe('cancel_orders に渡す確認トークン'),
-	expires_at: z.number().describe('トークン有効期限（unix ms）'),
+	confirmation_token: z
+		.string()
+		.optional()
+		.describe(
+			'内部利用専用。preview ハンドラ内の elicitation accept 経路で cancel_orders に渡すために生成するが、クライアント返却 structuredContent には含めない',
+		),
+	expires_at: z
+		.number()
+		.optional()
+		.describe(
+			'内部利用専用。confirmation_token と対になる有効期限（unix ms）。クライアント返却 structuredContent には含めない',
+		),
 	preview: z.object({
 		pair: z.string(),
 		order_ids: z.array(z.number()),

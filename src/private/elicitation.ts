@@ -5,12 +5,20 @@
  * 各 preview ツールは以下のパターンを同じ手順で実装していた:
  *   1. クライアントが elicitation/create に対応しているかを判定
  *   2. 対応していれば elicitInput でユーザー確認を取り、accept なら execute を実行
- *   3. 非対応 / decline / cancel / elicit 例外時はフォールバック表示
+ *   3. 非対応 / decline / cancel / elicit 例外時は `fallback`（実行不可通知）を返す
  *
  * 取引系 HITL（Human-in-the-Loop）の中核であり、3 箇所に散らばっていると
  * 仕様ドリフトで事故になるため、本モジュールに集約する。
  *
  * 取引系に強く紐づくため汎用 `lib/` ではなく `src/private/` 配下に置く。
+ *
+ * セキュリティ設計（重要）:
+ *   - `confirmation_token` は本ヘルパー経路のサーバープロセス内に閉じる。
+ *     クライアントに返る `fallback` / `declinedStructured` には含めない設計に
+ *     呼び出し側で揃えること（`tools/private/preview_*.ts` の handler 参照）。
+ *   - 「`structuredContent` は LLM 非可視」をホストの仕様保証として扱わない。
+ *     SEP-1624 / 各ホスト挙動の詳細は docs/private-api.md「content /
+ *     structuredContent / `_meta` の役割と HITL の境界」節を参照。
  */
 
 import { toStructured } from '../../lib/result.js';
@@ -27,7 +35,8 @@ export interface ElicitCapableServer {
 
 /**
  * クライアントが elicitation/create に対応しているかを判定する。
- * 非対応ホストでは従来挙動（structuredContent でトークンを返す）にフォールバックする。
+ * 非対応ホストでは取引実行を行わず、呼び出し側が用意した `fallback`
+ * （実行不可通知レスポンス）を返す。
  */
 export function clientSupportsElicitation(extra: ToolHandlerExtra | undefined): boolean {
 	const server = (extra as { server?: { getClientCapabilities?: () => unknown } } | undefined)?.server;
@@ -53,14 +62,19 @@ export interface WithElicitedConfirmationOptions {
 	onDeclinedText: string;
 	/**
 	 * decline / cancel / confirmed=false のときに structuredContent として返すオブジェクト。
-	 * preview の Result を toStructured() で変換したものを渡す想定。
+	 * **`confirmation_token` / `expires_at` は含めない** こと
+	 * （preview の Result から token を除いた sanitized 版を渡す想定）。
 	 */
 	declinedStructured: Record<string, unknown>;
 	/**
-	 * フォールバック先 McpResponse。以下のケースで返る:
+	 * elicitation 非対応ホスト向けの「実行不可通知」レスポンス。以下のケースで返る:
 	 *   - クライアントが elicitation 非対応
 	 *   - server.elicitInput が無い
 	 *   - elicitInput が例外を投げた
+	 *
+	 * セマンティクス: 取引実行は行わずプレビュー内容のみ返し、対応ホストで実行するよう
+	 * ユーザー / LLM に促す。**`content` / `structuredContent` のいずれにも
+	 * `confirmation_token` / `expires_at` を含めない** こと。
 	 */
 	fallback: McpResponse;
 }

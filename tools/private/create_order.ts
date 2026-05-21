@@ -218,8 +218,8 @@ export const toolDef: ToolDefinition = {
 	name: 'create_order',
 	description: [
 		'[Create Order / Place Order / Buy / Sell] 注文を発注する（現物または信用）。Private API。',
-		'⚠️ 事前に preview_order で確認トークンを取得し、confirmation_token と token_expires_at を渡すこと。',
-		'トークンなしの直接呼び出しは拒否される。',
+		'⚠️ このツールは preview_order の elicitation accept 経路から内部的に呼ばれることを前提とする。',
+		'confirmation_token はクライアントに返らない設計のため、LLM が直接 create_order を呼び出してもトークン検証で拒否される（HITL の第二防衛線）。',
 		'対応注文タイプは limit（指値）/ market（成行）/ stop（逆指値）/ stop_limit（逆指値指値）の 4 種類のみ。',
 		'公式 spec の take_profit / stop_loss / losscut は本実装では未対応（仕様が曖昧なため意図的に除外）。',
 		'position_side を指定すると信用注文として扱う（ロング新規=buy+long, ロング決済=sell+long, ショート新規=sell+short, ショート決済=buy+short）。',
