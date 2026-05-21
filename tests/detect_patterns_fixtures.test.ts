@@ -186,6 +186,92 @@ function buildFormingSymmetricalTriangleCandles(year = 2026): Candle[] {
 	return closes.map((close, index) => makeCandle(index, close, year));
 }
 
+// --- IHS with asymmetric neckline (PR #2 ケース2 相当) ---
+// 左肩・右肩は同水準（valley 80）、頭は十分下（valley 64）、
+// ネックラインを構成する2つのピーク（山1≒100, 山2≒108）が約7%非対称
+// → HS_NECKLINE_MAX_PCT=0.05 で hard reject されるべき
+// 5ピボット以上の間隔（minBarsBetweenSwings=4@1day）を確保するため間延びさせる
+function buildAsymmetricNecklineIHSCandles(year = 2026): Candle[] {
+	const closes = [
+		// pre-trend: downtrend (idx 0-7)
+		130, 125, 120, 115, 110, 105, 100, 90,
+		// 左肩 valley ≒ 80 (idx 8)
+		80,
+		// 山1 peak ≒ 100 (idx 13)
+		86, 90, 94, 98, 100,
+		// 頭 valley ≒ 64 (idx 18)
+		90, 78, 70, 66, 64,
+		// 山2 peak ≒ 108 (idx 23, 山1 から +8%)
+		74, 86, 96, 104, 108,
+		// 右肩 valley ≒ 80 (idx 28)
+		96, 90, 86, 82, 80,
+		// 続伸 (idx 29+)
+		90, 96, 100,
+	];
+	return closes.map((close, index) => makeCandle(index, close, year));
+}
+
+// --- H&S with asymmetric neckline (PR #2 H&S 側ミラー) ---
+// 左肩・右肩は同水準（peak 120）、頭は十分上（peak 140）、
+// ネックラインを構成する2つの谷（valley1≒100, valley2≒108）が約8%非対称
+function buildAsymmetricNecklineHSCandles(year = 2026): Candle[] {
+	const closes = [
+		// pre-trend: uptrend (idx 0-7)
+		70, 75, 80, 85, 90, 95, 100, 110,
+		// 左肩 peak ≒ 120 (idx 8)
+		120,
+		// 谷1 valley ≒ 100 (idx 13)
+		114, 110, 106, 102, 100,
+		// 頭 peak ≒ 140 (idx 18)
+		108, 118, 128, 134, 140,
+		// 谷2 valley ≒ 108 (idx 23, 谷1 から +8%)
+		126, 120, 116, 112, 108,
+		// 右肩 peak ≒ 120 (idx 28)
+		112, 114, 116, 118, 120,
+		// 下落
+		110, 100, 92,
+	];
+	return closes.map((close, index) => makeCandle(index, close, year));
+}
+
+// --- Double top with structurally unequal peaks (PR #2 double hard cap) ---
+// peak1≒100, valley≒80, peak2≒105 → 5% 差。tolerancePct=0.06 では near() を通るが
+// DOUBLE_LEVEL_MAX_PCT=0.03 の hard cap で弾かれるべき
+function buildUnequalPeaksDoubleTopCandles(year = 2026): Candle[] {
+	const closes = [
+		// 上昇 (idx 0-5)
+		70, 76, 82, 88, 94, 100,
+		// peak1 (idx 5) → valley (idx 11)
+		96, 92, 88, 84, 81, 80,
+		// 上昇して peak2 ≒ 105 (idx 17)
+		86, 92, 96, 100, 103, 105,
+		// 下落して valley 後 (idx 23) で4本目のピボットを形成
+		100, 92, 86, 82, 80, 82,
+		// 反発（4ピボット確保のための尾部）
+		88, 94,
+	];
+	return closes.map((close, index) => makeCandle(index, close, year));
+}
+
+// --- Double bottom with structurally unequal valleys (PR #2 double hard cap) ---
+// valley1≒100, peak≒120, valley2≒95 → 5% 差。tolerancePct=0.06 では near() を通るが
+// DOUBLE_LEVEL_MAX_PCT=0.03 の hard cap で弾かれるべき
+function buildUnequalValleysDoubleBottomCandles(year = 2026): Candle[] {
+	const closes = [
+		// 下落 (idx 0-5)
+		130, 124, 118, 112, 106, 100,
+		// valley1 (idx 5) → peak (idx 11)
+		104, 108, 112, 116, 119, 120,
+		// 下落して valley2 ≒ 95 (idx 17)
+		116, 110, 105, 100, 97, 95,
+		// 上昇して peak 後 (idx 23) で4本目のピボットを形成
+		100, 108, 114, 118, 120, 118,
+		// 反落（4ピボット確保のための尾部）
+		112, 106,
+	];
+	return closes.map((close, index) => makeCandle(index, close, year));
+}
+
 describe('detect_patterns fixtures', () => {
 	const mockedAnalyzeIndicators = vi.mocked(analyzeIndicators);
 
@@ -369,7 +455,7 @@ describe('detect_patterns fixtures', () => {
 	it('bull pennant の順方向ブレイクは success として保持できる', async () => {
 		mockedAnalyzeIndicators.mockResolvedValueOnce(asMockResult(indicatorsOk(buildBullPennantSuccessCandles())));
 
-		const res = await detectPatterns('btc_jpy', '1day', 22, {
+		const res = await detectPatterns('btc_jpy', '1day', 28, {
 			patterns: ['pennant'],
 			includeCompleted: true,
 			includeInvalid: true,
@@ -396,7 +482,7 @@ describe('detect_patterns fixtures', () => {
 	it('bull pennant の逆方向ブレイクは failure として保持できる', async () => {
 		mockedAnalyzeIndicators.mockResolvedValueOnce(asMockResult(indicatorsOk(buildBullPennantFailureCandles())));
 
-		const res = await detectPatterns('btc_jpy', '1day', 22, {
+		const res = await detectPatterns('btc_jpy', '1day', 28, {
 			patterns: ['pennant'],
 			includeCompleted: true,
 			includeInvalid: true,
@@ -610,6 +696,200 @@ describe('detect_patterns fixtures', () => {
 				}),
 			]),
 		);
+	});
+
+	// ── ネックライン水平性 / double 構造上限 hard cap（PR #2） ──
+	describe('反転パターン構造上限の hard reject', () => {
+		it('IHS: 山1/山2 が同水準でない場合 inverse_head_and_shoulders を検出しない', async () => {
+			mockedAnalyzeIndicators.mockResolvedValueOnce(asMockResult(indicatorsOk(buildAsymmetricNecklineIHSCandles())));
+			const res = await detectPatterns('btc_jpy', '1day', 32, {
+				patterns: ['inverse_head_and_shoulders'],
+				swingDepth: 2,
+				tolerancePct: 0.04,
+				includeCompleted: true,
+				includeForming: false,
+			});
+			assertOk(res);
+			const ihs = res.data.patterns.filter((p: { type: string }) => p.type === 'inverse_head_and_shoulders');
+			expect(ihs).toHaveLength(0);
+		});
+
+		it('IHS: view=debug の data.debug.candidates に neckline_not_horizontal が記録される', async () => {
+			mockedAnalyzeIndicators.mockResolvedValueOnce(asMockResult(indicatorsOk(buildAsymmetricNecklineIHSCandles())));
+			const res = await detectPatterns('btc_jpy', '1day', 32, {
+				patterns: ['inverse_head_and_shoulders'],
+				swingDepth: 2,
+				tolerancePct: 0.04,
+				includeCompleted: true,
+				includeForming: false,
+				view: 'debug',
+			});
+			assertOk(res);
+			const candidates = (res.meta.debug?.candidates ?? []) as Array<{
+				type: string;
+				accepted: boolean;
+				reason?: string;
+			}>;
+			const rejected = candidates.find(
+				(c) =>
+					c.type === 'inverse_head_and_shoulders' && c.accepted === false && c.reason === 'neckline_not_horizontal',
+			);
+			expect(rejected).toBeDefined();
+		});
+
+		it('H&S: 谷1/谷2 が同水準でない場合 head_and_shoulders を検出しない', async () => {
+			mockedAnalyzeIndicators.mockResolvedValueOnce(asMockResult(indicatorsOk(buildAsymmetricNecklineHSCandles())));
+			const res = await detectPatterns('btc_jpy', '1day', 32, {
+				patterns: ['head_and_shoulders'],
+				swingDepth: 2,
+				tolerancePct: 0.04,
+				includeCompleted: true,
+				includeForming: false,
+			});
+			assertOk(res);
+			const hs = res.data.patterns.filter((p: { type: string }) => p.type === 'head_and_shoulders');
+			expect(hs).toHaveLength(0);
+		});
+
+		it('double_top: tolerancePct=0.06 でも 2山差が3%超なら検出しない', async () => {
+			mockedAnalyzeIndicators.mockResolvedValueOnce(asMockResult(indicatorsOk(buildUnequalPeaksDoubleTopCandles())));
+			const res = await detectPatterns('btc_jpy', '1day', 28, {
+				patterns: ['double_top'],
+				swingDepth: 2,
+				tolerancePct: 0.06,
+				includeCompleted: true,
+				includeForming: false,
+			});
+			assertOk(res);
+			const dt = res.data.patterns.filter((p: { type: string }) => p.type === 'double_top');
+			expect(dt).toHaveLength(0);
+		});
+
+		it('double_top: view=debug の data.debug.candidates に peaks_not_equal_structural が記録される', async () => {
+			mockedAnalyzeIndicators.mockResolvedValueOnce(asMockResult(indicatorsOk(buildUnequalPeaksDoubleTopCandles())));
+			const res = await detectPatterns('btc_jpy', '1day', 28, {
+				patterns: ['double_top'],
+				swingDepth: 2,
+				tolerancePct: 0.06,
+				includeCompleted: true,
+				includeForming: false,
+				view: 'debug',
+			});
+			assertOk(res);
+			const candidates = (res.meta.debug?.candidates ?? []) as Array<{
+				type: string;
+				accepted: boolean;
+				reason?: string;
+			}>;
+			const rejected = candidates.find(
+				(c) => c.type === 'double_top' && c.accepted === false && c.reason === 'peaks_not_equal_structural',
+			);
+			expect(rejected).toBeDefined();
+		});
+
+		it('double_bottom: tolerancePct=0.06 でも 2谷差が3%超なら検出しない', async () => {
+			mockedAnalyzeIndicators.mockResolvedValueOnce(
+				asMockResult(indicatorsOk(buildUnequalValleysDoubleBottomCandles())),
+			);
+			const res = await detectPatterns('btc_jpy', '1day', 28, {
+				patterns: ['double_bottom'],
+				swingDepth: 2,
+				tolerancePct: 0.06,
+				includeCompleted: true,
+				includeForming: false,
+			});
+			assertOk(res);
+			const db = res.data.patterns.filter((p: { type: string }) => p.type === 'double_bottom');
+			expect(db).toHaveLength(0);
+		});
+
+		it('double_bottom: view=debug の data.debug.candidates に valleys_not_equal_structural が記録される', async () => {
+			mockedAnalyzeIndicators.mockResolvedValueOnce(
+				asMockResult(indicatorsOk(buildUnequalValleysDoubleBottomCandles())),
+			);
+			const res = await detectPatterns('btc_jpy', '1day', 28, {
+				patterns: ['double_bottom'],
+				swingDepth: 2,
+				tolerancePct: 0.06,
+				includeCompleted: true,
+				includeForming: false,
+				view: 'debug',
+			});
+			assertOk(res);
+			const candidates = (res.meta.debug?.candidates ?? []) as Array<{
+				type: string;
+				accepted: boolean;
+				reason?: string;
+			}>;
+			const rejected = candidates.find(
+				(c) => c.type === 'double_bottom' && c.accepted === false && c.reason === 'valleys_not_equal_structural',
+			);
+			expect(rejected).toBeDefined();
+		});
+
+		// ── 非退行：既存 fixture が引き続き検出されることを担保 ──
+		it('既存 double_top fixture は引き続き検出され、confidence は維持される', async () => {
+			mockedAnalyzeIndicators.mockResolvedValueOnce(asMockResult(indicatorsOk(buildCompletedDoubleTopCandles())));
+			const res = await detectPatterns('btc_jpy', '1day', 26, {
+				patterns: ['double_top'],
+				swingDepth: 2,
+				tolerancePct: 0.02,
+				includeCompleted: true,
+				includeForming: false,
+			});
+			assertOk(res);
+			const dt = res.data.patterns.filter((p: { type: string }) => p.type === 'double_top');
+			expect(dt).toHaveLength(1);
+			expect(dt[0].confidence).toBeGreaterThanOrEqual(0.6);
+		});
+
+		it('既存 forming double_bottom fixture は引き続き検出され、confidence は維持される', async () => {
+			mockedAnalyzeIndicators.mockResolvedValueOnce(asMockResult(indicatorsOk(buildFormingDoubleBottomCandles())));
+			const res = await detectPatterns('btc_jpy', '1day', 24, {
+				patterns: ['double_bottom'],
+				swingDepth: 2,
+				tolerancePct: 0.03,
+				includeForming: true,
+				includeCompleted: false,
+			});
+			assertOk(res);
+			const db = res.data.patterns.filter((p: { type: string }) => p.type === 'double_bottom');
+			expect(db).toHaveLength(1);
+			expect(db[0].status).toBe('forming');
+			expect(db[0].confidence).toBeGreaterThanOrEqual(0.4);
+		});
+
+		it('既存 completed head_and_shoulders fixture は引き続き検出される', async () => {
+			mockedAnalyzeIndicators.mockResolvedValueOnce(
+				asMockResult(indicatorsOk(buildCompletedHeadAndShouldersCandles())),
+			);
+			const res = await detectPatterns('btc_jpy', '1day', 28, {
+				patterns: ['head_and_shoulders'],
+				swingDepth: 2,
+				tolerancePct: 0.04,
+				includeCompleted: true,
+				includeForming: true,
+			});
+			assertOk(res);
+			const hs = res.data.patterns.filter((p: { type: string }) => p.type === 'head_and_shoulders');
+			expect(hs.length).toBeGreaterThanOrEqual(1);
+		});
+
+		it('既存 forming inverse_head_and_shoulders fixture は引き続き検出される', async () => {
+			mockedAnalyzeIndicators.mockResolvedValueOnce(
+				asMockResult(indicatorsOk(buildFormingInverseHeadAndShouldersCandles())),
+			);
+			const res = await detectPatterns('btc_jpy', '1day', 26, {
+				patterns: ['inverse_head_and_shoulders'],
+				swingDepth: 2,
+				tolerancePct: 0.04,
+				includeForming: true,
+				includeCompleted: true,
+			});
+			assertOk(res);
+			const ihs = res.data.patterns.filter((p: { type: string }) => p.type === 'inverse_head_and_shoulders');
+			expect(ihs.length).toBeGreaterThanOrEqual(1);
+		});
 	});
 
 	// ── 上流 warning の伝播（取得層 meta.warning / 計算層 meta.warnings） ──

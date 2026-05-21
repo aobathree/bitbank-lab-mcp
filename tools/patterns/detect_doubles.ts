@@ -6,6 +6,7 @@ import { EPSILON } from '../../lib/math.js';
 import { generatePatternDiagram } from '../../lib/pattern-diagrams.js';
 import { deduplicatePatterns, finalizeConf, periodScoreDays } from './helpers.js';
 import { clamp01, marginFromRelDev, relDev } from './regression.js';
+import { DOUBLE_LEVEL_MAX_PCT, isSameLevel } from './structural.js';
 import type { Pivot } from './swing.js';
 import { type CandleData, type DetectContext, type DetectResult, type PatternEntry, pushCand } from './types.js';
 
@@ -99,6 +100,19 @@ function findRelaxedDoubleTop(
 				type: 'double_top',
 				accepted: false,
 				reason: 'peaks_not_equal_relaxed',
+				idxs: [a.idx, b.idx, c.idx],
+				pts: [
+					{ role: 'peak1', idx: a.idx, price: a.price },
+					{ role: 'peak2', idx: c.idx, price: c.price },
+				],
+			});
+			continue;
+		}
+		if (!isSameLevel(a.price, c.price, DOUBLE_LEVEL_MAX_PCT)) {
+			pcand({
+				type: 'double_top',
+				accepted: false,
+				reason: 'peaks_not_equal_structural',
 				idxs: [a.idx, b.idx, c.idx],
 				pts: [
 					{ role: 'peak1', idx: a.idx, price: a.price },
@@ -208,6 +222,19 @@ function findRelaxedDoubleBottom(
 			});
 			continue;
 		}
+		if (!isSameLevel(a.price, c.price, DOUBLE_LEVEL_MAX_PCT)) {
+			pcand({
+				type: 'double_bottom',
+				accepted: false,
+				reason: 'valleys_not_equal_structural',
+				idxs: [a.idx, b.idx, c.idx],
+				pts: [
+					{ role: 'valley1', idx: a.idx, price: a.price },
+					{ role: 'valley2', idx: c.idx, price: c.price },
+				],
+			});
+			continue;
+		}
 
 		const necklinePrice = b.price;
 		const breakoutIdx = findBreakoutIdx(candles, c.idx, necklinePrice, 'above');
@@ -289,6 +316,7 @@ function tryFormingDoubleTop(ctx: DetectContext): PatternEntry | null {
 	const valley = valleyAfterPeak;
 	const leftPct = currentPrice / Math.max(1, leftPeak.price);
 	if (leftPct < 1 - FORMING_PEAK_TOLERANCE_PCT || leftPct > 1 + FORMING_PEAK_TOLERANCE_PCT) return null;
+	if (!isSameLevel(currentPrice, leftPeak.price, DOUBLE_LEVEL_MAX_PCT)) return null;
 	if (currentPrice <= valley.price) return null;
 
 	const ratio = (currentPrice - valley.price) / Math.max(EPSILON, leftPeak.price - valley.price);
@@ -358,7 +386,7 @@ function tryFormingDoubleBottom(ctx: DetectContext): PatternEntry | null {
 
 		const valleyDiff =
 			Math.abs(leftValley.price - rightValley.price) / Math.max(1, Math.max(leftValley.price, rightValley.price));
-		if (valleyDiff > tolerancePct * FORMING_TOLERANCE_MULTIPLIER) continue;
+		if (valleyDiff > Math.min(tolerancePct * FORMING_TOLERANCE_MULTIPLIER, DOUBLE_LEVEL_MAX_PCT)) continue;
 		if (currentPrice < rightValley.price * (1 - FORMING_VALLEY_INVALID_PCT)) continue;
 
 		const upRatio = (currentPrice - rightValley.price) / Math.max(EPSILON, midPeak.price - rightValley.price);
@@ -442,6 +470,19 @@ export function detectDoubles(ctx: DetectContext): DetectResult {
 							],
 						});
 					}
+					continue;
+				}
+				if (!isSameLevel(a.price, c.price, DOUBLE_LEVEL_MAX_PCT)) {
+					pcand({
+						type: 'double_top',
+						accepted: false,
+						reason: 'peaks_not_equal_structural',
+						idxs: [a.idx, b.idx, c.idx],
+						pts: [
+							{ role: 'peak1', idx: a.idx, price: a.price },
+							{ role: 'peak2', idx: c.idx, price: c.price },
+						],
+					});
 					continue;
 				}
 				// ネックライン下抜け（終値ベース1.5%バッファ）必須
@@ -541,6 +582,19 @@ export function detectDoubles(ctx: DetectContext): DetectResult {
 							],
 						});
 					}
+					continue;
+				}
+				if (!isSameLevel(a.price, c.price, DOUBLE_LEVEL_MAX_PCT)) {
+					pcand({
+						type: 'double_bottom',
+						accepted: false,
+						reason: 'valleys_not_equal_structural',
+						idxs: [a.idx, b.idx, c.idx],
+						pts: [
+							{ role: 'valley1', idx: a.idx, price: a.price },
+							{ role: 'valley2', idx: c.idx, price: c.price },
+						],
+					});
 					continue;
 				}
 				// ネックライン突破（終値ベース＋1.5%バッファ）を c 以降で確認

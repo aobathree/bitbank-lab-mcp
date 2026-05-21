@@ -5,6 +5,7 @@
 import { generatePatternDiagram } from '../../lib/pattern-diagrams.js';
 import { finalizeConf, periodScoreDays } from './helpers.js';
 import { clamp01, marginFromRelDev, relDev } from './regression.js';
+import { HS_NECKLINE_MAX_PCT, validateHorizontalNeckline } from './structural.js';
 import type { DeduplicablePattern, DetectContext, DetectResult } from './types.js';
 
 // ── 定数 ──
@@ -42,7 +43,8 @@ function findStrictInverseHS(ctx: DetectContext): { patterns: DeduplicablePatter
 			continue;
 		const shouldersNear = near(p0.price, p4.price);
 		const headLower = p2.price < Math.min(p0.price, p4.price) * (1 - tolerancePct);
-		if (shouldersNear && headLower) {
+		const necklineCheck = validateHorizontalNeckline(p1.price, p3.price, HS_NECKLINE_MAX_PCT);
+		if (shouldersNear && headLower && necklineCheck.ok) {
 			const start = candles[p0.idx].isoTime;
 			const end = candles[p4.idx].isoTime;
 			if (start && end) {
@@ -97,7 +99,13 @@ function findStrictInverseHS(ctx: DetectContext): { patterns: DeduplicablePatter
 				});
 			}
 		} else {
-			const reason = !shouldersNear ? 'shoulders_not_near' : !headLower ? 'head_not_lower' : 'unknown';
+			const reason = !shouldersNear
+				? 'shoulders_not_near'
+				: !headLower
+					? 'head_not_lower'
+					: !necklineCheck.ok
+						? 'neckline_not_horizontal'
+						: 'unknown';
 			debugCandidates.push({
 				type: 'inverse_head_and_shoulders',
 				accepted: false,
@@ -109,6 +117,10 @@ function findStrictInverseHS(ctx: DetectContext): { patterns: DeduplicablePatter
 					shouldersDiffPct: Math.abs(p0.price - p4.price) / Math.max(1, Math.max(p0.price, p4.price)),
 					head: p2.price,
 					thresholdPct: tolerancePct,
+					necklineP1: p1.price,
+					necklineP3: p3.price,
+					necklineDiffPct: necklineCheck.diffPct,
+					necklineMaxPct: HS_NECKLINE_MAX_PCT,
 				},
 				indices: [p0.idx, p1.idx, p2.idx, p3.idx, p4.idx],
 			});
@@ -141,7 +153,8 @@ function findStrictHS(ctx: DetectContext): { patterns: DeduplicablePattern[]; fo
 			continue;
 		const shouldersNear = near(p0.price, p4.price);
 		const headHigher = p2.price > Math.max(p0.price, p4.price) * (1 + tolerancePct);
-		if (shouldersNear && headHigher) {
+		const necklineCheck = validateHorizontalNeckline(p1.price, p3.price, HS_NECKLINE_MAX_PCT);
+		if (shouldersNear && headHigher && necklineCheck.ok) {
 			const start = candles[p0.idx].isoTime;
 			const end = candles[p4.idx].isoTime;
 			if (start && end) {
@@ -196,7 +209,13 @@ function findStrictHS(ctx: DetectContext): { patterns: DeduplicablePattern[]; fo
 				});
 			}
 		} else {
-			const reason = !shouldersNear ? 'shoulders_not_near' : !headHigher ? 'head_not_higher' : 'unknown';
+			const reason = !shouldersNear
+				? 'shoulders_not_near'
+				: !headHigher
+					? 'head_not_higher'
+					: !necklineCheck.ok
+						? 'neckline_not_horizontal'
+						: 'unknown';
 			debugCandidates.push({
 				type: 'head_and_shoulders',
 				accepted: false,
@@ -208,6 +227,10 @@ function findStrictHS(ctx: DetectContext): { patterns: DeduplicablePattern[]; fo
 					shouldersDiffPct: Math.abs(p0.price - p4.price) / Math.max(1, Math.max(p0.price, p4.price)),
 					head: p2.price,
 					thresholdPct: tolerancePct,
+					necklineP1: p1.price,
+					necklineP3: p3.price,
+					necklineDiffPct: necklineCheck.diffPct,
+					necklineMaxPct: HS_NECKLINE_MAX_PCT,
 				},
 				indices: [p0.idx, p1.idx, p2.idx, p3.idx, p4.idx],
 			});
@@ -240,7 +263,27 @@ function findRelaxedHS(ctx: DetectContext): DeduplicablePattern | null {
 			const shouldersNearRelaxed =
 				Math.abs(p0.price - p4.price) / Math.max(1, Math.max(p0.price, p4.price)) <= tolerancePct * factors.shoulder;
 			const headHigherRelaxed = p2.price > Math.max(p0.price, p4.price) * (1 + tolerancePct * factors.head);
-			if (!shouldersNearRelaxed || !headHigherRelaxed) continue;
+			const necklineCheck = validateHorizontalNeckline(p1.price, p3.price, HS_NECKLINE_MAX_PCT);
+			if (!shouldersNearRelaxed || !headHigherRelaxed || !necklineCheck.ok) {
+				if (shouldersNearRelaxed && headHigherRelaxed && !necklineCheck.ok) {
+					debugCandidates.push({
+						type: 'head_and_shoulders',
+						accepted: false,
+						reason: 'neckline_not_horizontal',
+						details: {
+							leftShoulder: p0.price,
+							rightShoulder: p4.price,
+							head: p2.price,
+							necklineP1: p1.price,
+							necklineP3: p3.price,
+							necklineDiffPct: necklineCheck.diffPct,
+							necklineMaxPct: HS_NECKLINE_MAX_PCT,
+						},
+						indices: [p0.idx, p1.idx, p2.idx, p3.idx, p4.idx],
+					});
+				}
+				continue;
+			}
 			const start = candles[p0.idx].isoTime;
 			const end = candles[p4.idx].isoTime;
 			if (!start || !end) continue;
@@ -321,7 +364,27 @@ function findRelaxedInverseHS(ctx: DetectContext): DeduplicablePattern | null {
 			const shouldersNearRelaxed =
 				Math.abs(p0.price - p4.price) / Math.max(1, Math.max(p0.price, p4.price)) <= tolerancePct * factors.shoulder;
 			const headLowerRelaxed = p2.price < Math.min(p0.price, p4.price) * (1 - tolerancePct * factors.head);
-			if (!(shouldersNearRelaxed && headLowerRelaxed)) continue;
+			const necklineCheck = validateHorizontalNeckline(p1.price, p3.price, HS_NECKLINE_MAX_PCT);
+			if (!(shouldersNearRelaxed && headLowerRelaxed && necklineCheck.ok)) {
+				if (shouldersNearRelaxed && headLowerRelaxed && !necklineCheck.ok) {
+					debugCandidates.push({
+						type: 'inverse_head_and_shoulders',
+						accepted: false,
+						reason: 'neckline_not_horizontal',
+						details: {
+							leftShoulder: p0.price,
+							rightShoulder: p4.price,
+							head: p2.price,
+							necklineP1: p1.price,
+							necklineP3: p3.price,
+							necklineDiffPct: necklineCheck.diffPct,
+							necklineMaxPct: HS_NECKLINE_MAX_PCT,
+						},
+						indices: [p0.idx, p1.idx, p2.idx, p3.idx, p4.idx],
+					});
+				}
+				continue;
+			}
 			const start = candles[p0.idx].isoTime;
 			const end = candles[p4.idx].isoTime;
 			if (!start || !end) continue;
