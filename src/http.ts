@@ -3,16 +3,15 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import express from 'express';
-import rateLimit from 'express-rate-limit';
 import type { NextFunction, Request, RequestHandler, Response } from 'express-serve-static-core';
+import { createBearerAuthMiddleware, createMcpRateLimiter, requireMcpHttpToken } from '../lib/mcp-http-security.js';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const ENDPOINT = '/mcp';
 
-/** レート制限: ウィンドウ（ミリ秒）。デフォルト 60 秒 */
-const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS ?? 60_000);
-/** レート制限: ウィンドウあたり最大リクエスト数。デフォルト 60 */
-const RATE_LIMIT_MAX = Number(process.env.RATE_LIMIT_MAX ?? 60);
+// HTTP transport は必ず Bearer トークンを要求する（未設定なら起動を拒否）。
+// stdio transport (src/server.ts のデフォルト経路) はこのファイルを import しないため影響なし。
+const MCP_HTTP_TOKEN = requireMcpHttpToken();
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -23,10 +22,17 @@ app.use((_req: Request, res: Response, next: NextFunction) => {
 	next();
 });
 
-// 簡易ヘルスチェック
+// 簡易ヘルスチェック（認証・rate limit 対象外。意図的に /mcp とは別パスにしている）
 app.get('/health', (_req: Request, res: Response) => {
 	res.json({ ok: true, ts: Date.now() });
 });
+
+// /mcp 配下は rate limit → Bearer 認証の順で保護する（GET メタデータも含む）。
+// rate limit を auth より先に置くのは、未認証クライアントによる総当たりや
+// DoS でハンドラ層 (Private API も含む) を消耗させないため。
+app.use(ENDPOINT, createMcpRateLimiter());
+app.use(ENDPOINT, createBearerAuthMiddleware(MCP_HTTP_TOKEN));
+
 // 最低限の /mcp ルート（メタ確認用）
 app.get(ENDPOINT, (_req: Request, res: Response) => {
 	res.json({
@@ -81,16 +87,6 @@ const transport = new HttpTransport({
 });
 
 await server.connect(transport);
-
-// /mcp エンドポイントにレート制限を適用（stdio には影響しない）
-const mcpLimiter = rateLimit({
-	windowMs: RATE_LIMIT_WINDOW_MS,
-	max: RATE_LIMIT_MAX,
-	standardHeaders: 'draft-7',
-	legacyHeaders: false,
-	message: { error: 'Too many requests. Please try again later.' },
-});
-app.use(ENDPOINT, mcpLimiter as unknown as RequestHandler);
 
 // SDK 公式の handleRequest を使って HTTP リクエストを処理する
 const mw: RequestHandler =

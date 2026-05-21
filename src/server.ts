@@ -6,6 +6,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import { getErrorMessage } from '../lib/error.js';
 import { logError, logToolRun } from '../lib/logger.js';
+import { createBearerAuthMiddleware, createMcpRateLimiter, requireMcpHttpToken } from '../lib/mcp-http-security.js';
 import { type PromptDef, prompts as promptDefs } from './prompts.js';
 import { appResourceRegistry } from './resources/app-resources.js';
 import { allToolDefs } from './tool-registry.js';
@@ -352,6 +353,9 @@ try {
 
 // Optional HTTP transport (/mcp) when MCP_ENABLE_HTTP=1 + PORT
 if (useHttp) {
+	// MCP_HTTP_TOKEN は HTTP transport 有効化時のみ必須。stdio 経路には影響しない。
+	// 未設定なら起動拒否（catch でログだけ吐いて握り潰さず、ここから throw する）。
+	const httpToken = requireMcpHttpToken();
 	try {
 		const { default: express } = await import('express');
 		const app = express();
@@ -364,6 +368,12 @@ if (useHttp) {
 			.split(',')
 			.map((s) => s.trim())
 			.filter(Boolean);
+
+		// /mcp 配下は rate limit → Bearer 認証の順で保護する。
+		// rate limit を auth より先に置くのは、未認証クライアントによる総当たりや
+		// DoS でハンドラ層 (Private API も含む) を消耗させないため。
+		app.use('/mcp', createMcpRateLimiter());
+		app.use('/mcp', createBearerAuthMiddleware(httpToken));
 
 		// StreamableHTTPServerTransport のコンストラクタ引数・戻り値が SDK で正確に export されていないため
 		// Transport 互換型にキャストを集約する
@@ -399,7 +409,10 @@ if (useHttp) {
 			// no stdout/stderr output to avoid STDIO transport contamination
 		});
 	} catch (e) {
+		// useHttp=true のとき stdio は既にスキップされているため、HTTP 起動に失敗した時点で
+		// トランスポート無しのままプロセスが生きてしまう。明示的に再 throw して落とす。
 		// eslint-disable-next-line no-console
-		console.warn('HTTP transport setup skipped:', getErrorMessage(e));
+		console.warn('HTTP transport setup failed:', getErrorMessage(e));
+		throw e;
 	}
 }

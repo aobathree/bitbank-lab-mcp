@@ -233,6 +233,7 @@ describe('server.ts smoke', () => {
 		delete process.env.PORT;
 		delete process.env.ALLOWED_HOSTS;
 		delete process.env.ALLOWED_ORIGINS;
+		delete process.env.MCP_HTTP_TOKEN;
 	});
 
 	afterEach(() => {
@@ -453,6 +454,7 @@ describe('server.ts smoke', () => {
 		process.env.PORT = '3010';
 		process.env.ALLOWED_HOSTS = '127.0.0.1,localhost,example.com';
 		process.env.ALLOWED_ORIGINS = 'https://example.com';
+		process.env.MCP_HTTP_TOKEN = 'smoke-test-token';
 
 		const server = await importServer();
 
@@ -470,8 +472,47 @@ describe('server.ts smoke', () => {
 		expect(runtime.expressFactory).toHaveBeenCalledTimes(1);
 		expect(runtime.expressJson).toHaveBeenCalledTimes(1);
 		expect(runtime.expressApp?.use).toHaveBeenNthCalledWith(1, { kind: 'json-middleware' });
-		// handleRequest ベースのミドルウェアが '/mcp' パスで登録される
+		// 順序: 1) express.json, 2) rate limit (/mcp), 3) Bearer auth (/mcp), 4) handleRequest (/mcp)
 		expect(runtime.expressApp?.use).toHaveBeenNthCalledWith(2, '/mcp', expect.any(Function));
+		expect(runtime.expressApp?.use).toHaveBeenNthCalledWith(3, '/mcp', expect.any(Function));
+		expect(runtime.expressApp?.use).toHaveBeenNthCalledWith(4, '/mcp', expect.any(Function));
 		expect(runtime.expressApp?.listen).toHaveBeenCalledWith(expect.any(Number), expect.any(Function));
+	});
+
+	it('HTTP 有効化時に MCP_HTTP_TOKEN 未設定なら起動失敗する', async () => {
+		const { z } = await import('zod');
+
+		runtime.toolDefs = [
+			{
+				name: 'smoke_tool',
+				description: 'Smoke tool description',
+				inputSchema: z.object({ pair: z.string() }),
+				handler: vi.fn(async () => ({ summary: 'ok', ok: true })) as unknown as ToolDefinition['handler'],
+			},
+		];
+		process.env.MCP_ENABLE_HTTP = '1';
+		process.env.PORT = '3011';
+		delete process.env.MCP_HTTP_TOKEN;
+
+		await expect(importServer()).rejects.toThrow(/MCP_HTTP_TOKEN is required/);
+	});
+
+	it('stdio (HTTP 無効) では MCP_HTTP_TOKEN 未設定でも起動する', async () => {
+		const { z } = await import('zod');
+
+		runtime.toolDefs = [
+			{
+				name: 'smoke_tool',
+				description: 'Smoke tool description',
+				inputSchema: z.object({ pair: z.string() }),
+				handler: vi.fn(async () => ({ summary: 'ok', ok: true })) as unknown as ToolDefinition['handler'],
+			},
+		];
+		delete process.env.MCP_ENABLE_HTTP;
+		delete process.env.MCP_HTTP_TOKEN;
+
+		const server = await importServer();
+		expect(server.connections).toHaveLength(1);
+		expect(server.connections[0].kind).toBe('stdio');
 	});
 });
