@@ -72,6 +72,20 @@ describe('render_candle_pattern_diagram', () => {
 		expect(parse).toThrow();
 	});
 
+	it('svg ルート要素に viewBox を持つ（コンテナで縦に切れないように）', async () => {
+		const res = await renderCandlePatternDiagram({
+			candles: buildSampleCandles(),
+			pattern: {
+				name: '陽線包み線',
+				confirmedDate: '01/02',
+				involvedIndices: [0, 1],
+			},
+		});
+
+		assertOk(res);
+		expect(res.data.svg).toMatch(/<svg[^>]*\sviewBox="0 0 \d+ \d+"/);
+	});
+
 	it('価格レンジが 0 のときも SVG に NaN や Infinity を含めるべきではない', async () => {
 		const res = await renderCandlePatternDiagram({
 			candles: [makeCandle('01/01', 100, 100, 100, 100, 'bullish'), makeCandle('01/02', 100, 100, 100, 100, 'bearish')],

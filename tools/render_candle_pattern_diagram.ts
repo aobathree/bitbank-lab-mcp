@@ -56,9 +56,11 @@ const COLORS = {
 };
 
 // ----- レイアウト定数 -----
+// descBox 下端 = descBoxY + descBoxHeight、その下に最低 30px のバッファを確保し、
+// コンテナがアスペクト比で多少クリップしても説明文が切れないようにする。
 const LAYOUT = {
 	width: 800,
-	height: 450,
+	height: 480,
 	plotTop: 60,
 	plotBottom: 340,
 	plotLeft: 100,
@@ -68,7 +70,7 @@ const LAYOUT = {
 	startX: 140,
 	dateLabelY: 365,
 	descBoxY: 385,
-	descBoxHeight: 50,
+	descBoxHeight: 55,
 };
 
 // ----- ヘルパー関数 -----
@@ -148,7 +150,11 @@ export default async function renderCandlePatternDiagram(opts: {
 		const fontFamily = `'Noto Sans JP', sans-serif`;
 
 		// ヘッダー
-		parts.push(`<svg width="${LAYOUT.width}" height="${LAYOUT.height}" xmlns="http://www.w3.org/2000/svg">`);
+		// viewBox を必ず指定する。コンテナで width: 100% / height: auto などの CSS が当たっても
+		// アスペクト比を維持してスケールするため、下端が切れる事故を防げる。
+		parts.push(
+			`<svg width="${LAYOUT.width}" height="${LAYOUT.height}" viewBox="0 0 ${LAYOUT.width} ${LAYOUT.height}" preserveAspectRatio="xMidYMid meet" xmlns="http://www.w3.org/2000/svg">`,
+		);
 
 		// Google Fonts インポート & グローバルスタイル
 		parts.push(`<defs>
@@ -288,8 +294,10 @@ export default async function renderCandlePatternDiagram(opts: {
 			parts.push(
 				`<rect x="50" y="${LAYOUT.descBoxY}" width="${LAYOUT.width - 100}" height="${LAYOUT.descBoxHeight}" rx="5" fill="${colors.descBox}"/>`,
 			);
+			// テキスト baseline を descBox の視覚的中央に合わせる（font-size 14 のメトリクス補正込み）。
+			const descTextY = LAYOUT.descBoxY + LAYOUT.descBoxHeight / 2 + 5;
 			parts.push(
-				`<text x="${LAYOUT.width / 2}" y="${LAYOUT.descBoxY + 30}" text-anchor="middle" font-size="14" fill="${colors.text}">${escapeXml(desc)}</text>`,
+				`<text x="${LAYOUT.width / 2}" y="${descTextY}" text-anchor="middle" font-size="14" fill="${colors.text}">${escapeXml(desc)}</text>`,
 			);
 		}
 
