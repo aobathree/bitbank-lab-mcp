@@ -1,3 +1,4 @@
+import { type FetchChunkResult, fetchCandleChunk, mergeChunks, UpstreamApiError } from '../lib/candle-fetch.js';
 import { dayjs, today, toIsoTime, toIsoWithTz } from '../lib/datetime.js';
 import { getErrorMessage } from '../lib/error.js';
 import { formatSummary } from '../lib/formatter.js';
@@ -67,83 +68,19 @@ function todayYyyymmdd(): string {
 	return today('YYYYMMDD');
 }
 
-type OhlcvRow = [unknown, unknown, unknown, unknown, unknown, unknown];
-interface FetchChunkResult {
-	rows: OhlcvRow[];
-	rateLimit: RateLimitInfo | null;
-	error?: unknown;
-}
-
-// チャンク fetcher が success:0 を検出したときに記録するエラー。
-// 全チャンク失敗時に outer catch の `failFromError`（=network 分類）に流すのではなく、
-// upstream として明示分類するため instanceof で判定する。
-class UpstreamApiError extends Error {
-	constructor(message: string) {
-		super(message);
-		this.name = 'UpstreamApiError';
+/**
+ * 全 chunk 失敗時に first error を分類する。
+ * - UpstreamApiError（success:0 由来）→ upstream として明示分類した FailResult
+ * - その他（ネットワーク等）→ throw（outer catch で network 分類）
+ * - エラーが存在しない（= rows>0 ありえる）→ null
+ */
+function classifyAllChunksFailure(results: FetchChunkResult[]): FailResult | null {
+	const firstError = results.find((r) => r.error);
+	if (firstError?.error instanceof UpstreamApiError) {
+		return fail(firstError.error.message, 'upstream');
 	}
-}
-
-// 単一年のデータを取得する内部関数
-async function fetchSingleYear(pair: string, type: string, year: number): Promise<FetchChunkResult> {
-	const url = `${BITBANK_API_BASE}/${pair}/candlestick/${type}/${year}`;
-	try {
-		const { data: json, rateLimit } = await fetchJsonWithRateLimit(url, {
-			timeoutMs: CANDLE_FETCH.chunkTimeoutMs,
-			retries: DEFAULT_RETRIES,
-		});
-		const jsonObj = json as {
-			success?: number;
-			data?: { candlestick?: Array<{ ohlcv?: unknown[] }>; code?: number };
-		};
-		// success:0 を空配列として握りつぶさず、チャンク失敗として扱う。
-		// UpstreamApiError でラップすることで、全チャンク失敗時に outer catch ではなく
-		// 明示的な upstream 分類で fail を返せる。
-		if (jsonObj?.success !== 1) {
-			const code = jsonObj?.data?.code;
-			const msg = code != null ? `bitbank API error (code: ${code})` : 'bitbank API error';
-			return { rows: [], rateLimit, error: new UpstreamApiError(msg) };
-		}
-		const cs = jsonObj?.data?.candlestick?.[0];
-		const ohlcvs = cs?.ohlcv ?? [];
-		return { rows: ohlcvs as OhlcvRow[], rateLimit };
-	} catch (e) {
-		// 存在しない年や取得失敗は空配列を返す（エラーも保持）
-		return { rows: [], rateLimit: null, error: e };
-	}
-}
-
-// 単一日のデータを取得する内部関数
-async function fetchSingleDay(
-	pair: string,
-	type: string,
-	dateStr: string, // YYYYMMDD形式
-): Promise<FetchChunkResult> {
-	const url = `${BITBANK_API_BASE}/${pair}/candlestick/${type}/${dateStr}`;
-	try {
-		const { data: json, rateLimit } = await fetchJsonWithRateLimit(url, {
-			timeoutMs: CANDLE_FETCH.chunkTimeoutMs,
-			retries: DEFAULT_RETRIES,
-		});
-		const jsonObj = json as {
-			success?: number;
-			data?: { candlestick?: Array<{ ohlcv?: unknown[] }>; code?: number };
-		};
-		// success:0 を空配列として握りつぶさず、チャンク失敗として扱う。
-		// UpstreamApiError でラップすることで、全チャンク失敗時に outer catch ではなく
-		// 明示的な upstream 分類で fail を返せる。
-		if (jsonObj?.success !== 1) {
-			const code = jsonObj?.data?.code;
-			const msg = code != null ? `bitbank API error (code: ${code})` : 'bitbank API error';
-			return { rows: [], rateLimit, error: new UpstreamApiError(msg) };
-		}
-		const cs = jsonObj?.data?.candlestick?.[0];
-		const ohlcvs = cs?.ohlcv ?? [];
-		return { rows: ohlcvs as OhlcvRow[], rateLimit };
-	} catch (e) {
-		// 存在しない日や取得失敗は空配列を返す（エラーも保持）
-		return { rows: [], rateLimit: null, error: e };
-	}
+	if (firstError?.error) throw firstError.error;
+	return null;
 }
 
 export default async function getCandles(
@@ -215,114 +152,70 @@ export default async function getCandles(
 		if (needsMultiYear) {
 			// 複数年の並列取得（起点は anchorYear＝date 指定時はその年、未指定時は現在年）
 			const years = Array.from({ length: yearsNeeded }, (_, i) => anchorYear - i);
+			const yearKeys = years.map(String);
 
-			const results = await Promise.all(years.map((year) => fetchSingleYear(chk.pair, type, year)));
-			// 最後に成功したレスポンスの rateLimit を採用
-			for (const r of results) {
-				if (r.rateLimit) lastRateLimit = r.rateLimit;
-			}
-
-			// 部分失敗を追跡
-			const failedChunks = results.filter((r) => r.error);
-			const totalChunks = results.length;
-
-			// 古い年順にマージ（時系列順）
-			const allOhlcvs: OhlcvRow[] = [];
-			for (let i = results.length - 1; i >= 0; i--) {
-				allOhlcvs.push(...results[i].rows);
-			}
+			const merged = await mergeChunks(yearKeys, (key) =>
+				fetchCandleChunk(chk.pair, type, key, { timeoutMs: CANDLE_FETCH.chunkTimeoutMs }),
+			);
+			lastRateLimit = merged.lastRateLimit;
 
 			// 全チャンクがエラーの場合は分類して伝播
 			// - UpstreamApiError（success:0 由来）→ upstream として明示分類
 			// - それ以外（ネットワーク等）→ throw → outer catch で network 分類
-			if (allOhlcvs.length === 0) {
-				const firstError = results.find((r) => r.error);
-				if (firstError?.error instanceof UpstreamApiError) {
-					return fail(firstError.error.message, 'upstream');
-				}
-				if (firstError?.error) throw firstError.error;
+			if (merged.rows.length === 0) {
+				const classified = classifyAllChunksFailure(merged.results);
+				if (classified) return classified;
 			}
 
 			// 過半数失敗なら信頼性が低いため fail
-			if (failedChunks.length > 0 && failedChunks.length >= totalChunks / 2) {
-				return fail(
-					`ローソク足取得の過半数が失敗しました（${totalChunks}年中${failedChunks.length}年失敗）`,
-					'upstream',
-				);
+			const totalChunks = merged.results.length;
+			const failedCount = merged.failedKeys.length;
+			if (failedCount > 0 && failedCount >= totalChunks / 2) {
+				return fail(`ローソク足取得の過半数が失敗しました（${totalChunks}年中${failedCount}年失敗）`, 'upstream');
 			}
-			if (failedChunks.length > 0) {
-				const failedYears = years.filter((_, i) => results[i].error);
-				fetchWarning = `⚠️ ${totalChunks}年中${failedChunks.length}年の取得に失敗しました（${failedYears.join(', ')}年）。データが不完全な可能性があります。`;
+			if (failedCount > 0) {
+				fetchWarning = `⚠️ ${totalChunks}年中${failedCount}年の取得に失敗しました（${merged.failedKeys.join(', ')}年）。データが不完全な可能性があります。`;
 			}
 
-			// タイムスタンプでソート（念のため）
-			allOhlcvs.sort((a, b) => {
-				const tsA = Number(a[5]) || 0;
-				const tsB = Number(b[5]) || 0;
-				return tsA - tsB;
-			});
-
-			ohlcvs = allOhlcvs;
+			ohlcvs = merged.rows;
 			json = { data: { candlestick: [{ ohlcv: ohlcvs }] }, _multiYear: { years, totalFetched: ohlcvs.length } };
 		} else if (needsMultiDay) {
 			// 複数日の並列取得（1hour, 30min, etc.）
-			// 最大同時リクエスト数を制限（API負荷対策）
-			// bitbank API: レート制限があるため、控えめな設定に
-			// 3並列 + バッチ間500ms遅延 → 約6リクエスト/秒
-			const maxConcurrent = CANDLE_FETCH.dailyConcurrency;
-			const batchDelayMs = CANDLE_FETCH.dailyBatchDelayMs;
+			// bitbank API レート制限対策: 3 並列 + バッチ間 500ms → 約 6 req/s に抑える
 			const baseDate = dayjs(dateCheck.value, 'YYYYMMDD');
 			const dates = Array.from({ length: daysNeeded }, (_, i) => baseDate.subtract(i, 'day').format('YYYYMMDD'));
 
-			const allOhlcvs: OhlcvRow[] = [];
-			const allDayResults: FetchChunkResult[] = [];
-
-			// バッチ処理で並列取得（バッチ間に遅延を入れる）
-			for (let i = 0; i < dates.length; i += maxConcurrent) {
-				if (i > 0) {
-					// バッチ間の遅延（レート制限対策）
-					await new Promise((resolve) => setTimeout(resolve, batchDelayMs));
-				}
-				const batch = dates.slice(i, i + maxConcurrent);
-				const results = await Promise.all(batch.map((dateStr) => fetchSingleDay(chk.pair, type, dateStr)));
-				for (const result of results) {
-					allOhlcvs.push(...result.rows);
-					allDayResults.push(result);
-					if (result.rateLimit) lastRateLimit = result.rateLimit;
-				}
-			}
-
-			// 部分失敗を追跡
-			const failedDays = allDayResults.filter((r) => r.error);
-			const totalDays = allDayResults.length;
+			const merged = await mergeChunks(
+				dates,
+				(key) => fetchCandleChunk(chk.pair, type, key, { timeoutMs: CANDLE_FETCH.chunkTimeoutMs }),
+				{
+					batched: {
+						concurrency: CANDLE_FETCH.dailyConcurrency,
+						batchDelayMs: CANDLE_FETCH.dailyBatchDelayMs,
+					},
+				},
+			);
+			lastRateLimit = merged.lastRateLimit;
 
 			// 全チャンクがエラーの場合は分類して伝播
 			// - UpstreamApiError（success:0 由来）→ upstream として明示分類
 			// - それ以外（ネットワーク等）→ throw → outer catch で network 分類
-			if (allOhlcvs.length === 0) {
-				const firstError = allDayResults.find((r) => r.error);
-				if (firstError?.error instanceof UpstreamApiError) {
-					return fail(firstError.error.message, 'upstream');
-				}
-				if (firstError?.error) throw firstError.error;
+			if (merged.rows.length === 0) {
+				const classified = classifyAllChunksFailure(merged.results);
+				if (classified) return classified;
 			}
 
 			// 過半数失敗なら信頼性が低いため fail
-			if (failedDays.length > 0 && failedDays.length >= totalDays / 2) {
-				return fail(`ローソク足取得の過半数が失敗しました（${totalDays}日中${failedDays.length}日失敗）`, 'upstream');
+			const totalDays = merged.results.length;
+			const failedCount = merged.failedKeys.length;
+			if (failedCount > 0 && failedCount >= totalDays / 2) {
+				return fail(`ローソク足取得の過半数が失敗しました（${totalDays}日中${failedCount}日失敗）`, 'upstream');
 			}
-			if (failedDays.length > 0) {
-				fetchWarning = `⚠️ ${totalDays}日中${failedDays.length}日の取得に失敗しました。データが不完全な可能性があります。`;
+			if (failedCount > 0) {
+				fetchWarning = `⚠️ ${totalDays}日中${failedCount}日の取得に失敗しました。データが不完全な可能性があります。`;
 			}
 
-			// タイムスタンプでソート（古い順）
-			allOhlcvs.sort((a, b) => {
-				const tsA = Number(a[5]) || 0;
-				const tsB = Number(b[5]) || 0;
-				return tsA - tsB;
-			});
-
-			ohlcvs = allOhlcvs;
+			ohlcvs = merged.rows;
 			json = {
 				data: { candlestick: [{ ohlcv: ohlcvs }] },
 				_multiDay: { daysRequested: daysNeeded, totalFetched: ohlcvs.length },
