@@ -105,8 +105,8 @@ export const toolDef: ToolDefinition = {
 	name: 'cancel_orders',
 	description:
 		'[Cancel Orders / Bulk Cancel] 複数の注文を一括キャンセル（最大30件）。キャンセル後の注文情報を返す。Private API。' +
-		' ⚠️ 事前に preview_cancel_orders で確認トークンを取得し、confirmation_token と token_expires_at を渡すこと。' +
-		' トークンなしの直接呼び出しは拒否される。',
+		' ⚠️ このツールは preview_cancel_orders の elicitation accept 経路から内部的に呼ばれることを前提とする。' +
+		' confirmation_token はクライアントに返らない設計のため、LLM が直接 cancel_orders を呼び出してもトークン検証で拒否される（HITL の第二防衛線）。',
 	inputSchema: CancelOrdersInputSchema,
 	handler: async (args) => {
 		const result = await cancelOrders(

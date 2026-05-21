@@ -5,12 +5,21 @@
  * 各 preview ツールは以下のパターンを同じ手順で実装していた:
  *   1. クライアントが elicitation/create に対応しているかを判定
  *   2. 対応していれば elicitInput でユーザー確認を取り、accept なら execute を実行
- *   3. 非対応 / decline / cancel / elicit 例外時はフォールバック表示
+ *   3. 非対応 / decline / cancel / elicit 例外時は `fallback`（実行不可通知）を返す
  *
  * 取引系 HITL（Human-in-the-Loop）の中核であり、3 箇所に散らばっていると
  * 仕様ドリフトで事故になるため、本モジュールに集約する。
  *
  * 取引系に強く紐づくため汎用 `lib/` ではなく `src/private/` 配下に置く。
+ *
+ * セキュリティ設計（重要）:
+ *   - `confirmation_token` / `expires_at` は本ヘルパー経路のサーバープロセス内に閉じる。
+ *     呼び出し側が誤って `fallback` / `declinedStructured` に token を含めても、
+ *     `withElicitedConfirmation` 内の `stripConfirmationTokenFields` で必ず除去される
+ *     （多層防御。caller convention だけに依存しない最終ガード）。
+ *   - 「`structuredContent` は LLM 非可視」をホストの仕様保証として扱わない。
+ *     SEP-1624 / 各ホスト挙動の詳細は docs/private-api.md「content /
+ *     structuredContent / `_meta` の役割と HITL の境界」節を参照。
  */
 
 import { toStructured } from '../../lib/result.js';
@@ -27,13 +36,38 @@ export interface ElicitCapableServer {
 
 /**
  * クライアントが elicitation/create に対応しているかを判定する。
- * 非対応ホストでは従来挙動（structuredContent でトークンを返す）にフォールバックする。
+ * 非対応ホストでは取引実行を行わず、呼び出し側が用意した `fallback`
+ * （実行不可通知レスポンス）を返す。
  */
 export function clientSupportsElicitation(extra: ToolHandlerExtra | undefined): boolean {
 	const server = (extra as { server?: { getClientCapabilities?: () => unknown } } | undefined)?.server;
 	const caps = typeof server?.getClientCapabilities === 'function' ? server.getClientCapabilities() : undefined;
 	const elicitation = (caps as { elicitation?: unknown } | undefined)?.elicitation;
 	return Boolean(elicitation);
+}
+
+/**
+ * structuredContent / declinedStructured から `confirmation_token` / `expires_at` を
+ * 除去する。`withElicitedConfirmation` の最終ガードとして使用し、caller が誤って
+ * これらのフィールドを含めて渡しても外部に漏れないことを保証する。
+ *
+ * preview ツールの structuredContent は `{ ok, summary, data: { confirmation_token,
+ * expires_at, preview, ... }, meta }` の Result 形式をとるため、最上位と `data`
+ * 配下の 2 階層を剥がす。深いネストに `confirmation_token` を埋める caller は想定して
+ * いないが、最上位も対象にしておくことで形状違いの caller 追加にも耐える。
+ */
+function stripConfirmationTokenFields(value: Record<string, unknown>): Record<string, unknown> {
+	const result: Record<string, unknown> = { ...value };
+	delete result.confirmation_token;
+	delete result.expires_at;
+	const data = result.data;
+	if (data && typeof data === 'object' && !Array.isArray(data)) {
+		const sanitizedData: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+		delete sanitizedData.confirmation_token;
+		delete sanitizedData.expires_at;
+		result.data = sanitizedData;
+	}
+	return result;
 }
 
 export interface WithElicitedConfirmationOptions {
@@ -53,14 +87,21 @@ export interface WithElicitedConfirmationOptions {
 	onDeclinedText: string;
 	/**
 	 * decline / cancel / confirmed=false のときに structuredContent として返すオブジェクト。
-	 * preview の Result を toStructured() で変換したものを渡す想定。
+	 * preview の Result を `toStructured()` で変換したものを渡してよい。
+	 * `confirmation_token` / `expires_at` は本ヘルパー内で必ず除去されるため caller 側で
+	 * 取り除く必要はないが、防御的に最小限のフィールドだけ含めることを推奨する。
 	 */
 	declinedStructured: Record<string, unknown>;
 	/**
-	 * フォールバック先 McpResponse。以下のケースで返る:
+	 * elicitation 非対応ホスト向けの「実行不可通知」レスポンス。以下のケースで返る:
 	 *   - クライアントが elicitation 非対応
 	 *   - server.elicitInput が無い
 	 *   - elicitInput が例外を投げた
+	 *
+	 * セマンティクス: 取引実行は行わずプレビュー内容のみ返し、対応ホストで実行するよう
+	 * ユーザー / LLM に促す。`structuredContent` 内の `confirmation_token` / `expires_at`
+	 * は本ヘルパー内で必ず除去される（caller convention だけに依存しない最終ガード）。
+	 * `content[0].text` 側は caller の責任で token を含めないこと。
 	 */
 	fallback: McpResponse;
 }
@@ -84,13 +125,21 @@ export interface WithElicitedConfirmationOptions {
  *     （elicitInput 自体の例外のみフォールバックさせる）。
  */
 export async function withElicitedConfirmation(opts: WithElicitedConfirmationOptions): Promise<McpResponse> {
+	// fallback / declinedStructured は caller convention だけに依頼せず、ここで必ず
+	// confirmation_token / expires_at を剥がす（多層防御の最終ガード）。
+	const safeFallback: McpResponse = {
+		...opts.fallback,
+		structuredContent: stripConfirmationTokenFields(opts.fallback.structuredContent),
+	};
+	const safeDeclinedStructured = stripConfirmationTokenFields(opts.declinedStructured);
+
 	if (!clientSupportsElicitation(opts.extra)) {
-		return opts.fallback;
+		return safeFallback;
 	}
 
 	const server = (opts.extra as { server?: ElicitCapableServer } | undefined)?.server;
 	if (!server || typeof server.elicitInput !== 'function') {
-		return opts.fallback;
+		return safeFallback;
 	}
 
 	let elicit: { action: 'accept' | 'decline' | 'cancel'; content?: Record<string, unknown> };
@@ -107,20 +156,22 @@ export async function withElicitedConfirmation(opts: WithElicitedConfirmationOpt
 		});
 	} catch {
 		// elicitInput が想定外に失敗した場合はフォールバックに進む。
-		return opts.fallback;
+		return safeFallback;
 	}
 
 	if (elicit.action !== 'accept' || !elicit.content?.confirmed) {
 		return {
 			content: [{ type: 'text', text: opts.onDeclinedText }],
-			structuredContent: opts.declinedStructured,
+			structuredContent: safeDeclinedStructured,
 		};
 	}
 
 	const execResult = await opts.onConfirmed();
 	const text = execResult.ok ? execResult.summary : `Error: ${execResult.summary}`;
+	// onConfirmed の Result（create_order 等の戻り値）には confirmation_token は含まれない
+	// 想定だが、念のため同じ最終ガードを通す。
 	return {
 		content: [{ type: 'text', text }],
-		structuredContent: toStructured(execResult),
+		structuredContent: stripConfirmationTokenFields(toStructured(execResult)),
 	};
 }

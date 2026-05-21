@@ -271,4 +271,78 @@ describe('withElicitedConfirmation', () => {
 			expect(onConfirmed).toHaveBeenCalledTimes(1);
 		});
 	});
+
+	// 多層防御: caller が誤って confirmation_token / expires_at を含めて渡しても、
+	// withElicitedConfirmation 内で必ず剥がされることを保証する。
+	// caller 側 sanitize は将来のリファクタで消えうるため、helper レベルで unit テストする。
+	describe('confirmation_token / expires_at の最終ガード', () => {
+		const tokenLeakedStructured = {
+			ok: true,
+			summary: 'preview',
+			data: {
+				confirmation_token: 'SECRET-TOKEN',
+				expires_at: 1_700_000_000_000,
+				preview: { pair: 'btc_jpy' },
+			},
+			meta: { action: 'create_order' },
+		} as Record<string, unknown>;
+
+		it('elicitation 非対応ホスト: fallback.structuredContent から token が剥がされる', async () => {
+			const result = await withElicitedConfirmation({
+				...baseOpts,
+				extra: { server: makeServer({ supportsElicitation: false }) },
+				onConfirmed: vi.fn(),
+				declinedStructured: { declined: true } as Record<string, unknown>,
+				fallback: {
+					content: [{ type: 'text', text: 'FALLBACK_TEXT' }],
+					structuredContent: tokenLeakedStructured,
+				},
+			});
+
+			const data = (result.structuredContent as { data?: Record<string, unknown> }).data;
+			expect(data?.confirmation_token).toBeUndefined();
+			expect(data?.expires_at).toBeUndefined();
+			expect(data?.preview).toEqual({ pair: 'btc_jpy' });
+			// caller の渡したオブジェクトをミューテートしていないこと
+			expect((tokenLeakedStructured.data as Record<string, unknown>).confirmation_token).toBe('SECRET-TOKEN');
+		});
+
+		it('decline 経路: declinedStructured から token が剥がされる', async () => {
+			const elicitInput = vi.fn().mockResolvedValue({ action: 'decline' });
+
+			const result = await withElicitedConfirmation({
+				...baseOpts,
+				extra: { server: makeServer({ elicitInput }) },
+				onConfirmed: vi.fn(),
+				declinedStructured: tokenLeakedStructured,
+				fallback: makeFallback(),
+			});
+
+			const data = (result.structuredContent as { data?: Record<string, unknown> }).data;
+			expect(data?.confirmation_token).toBeUndefined();
+			expect(data?.expires_at).toBeUndefined();
+			expect(data?.preview).toEqual({ pair: 'btc_jpy' });
+		});
+
+		it('最上位の confirmation_token / expires_at も剥がす（形状違い caller 防御）', async () => {
+			const result = await withElicitedConfirmation({
+				...baseOpts,
+				extra: { server: makeServer({ supportsElicitation: false }) },
+				onConfirmed: vi.fn(),
+				declinedStructured: { declined: true } as Record<string, unknown>,
+				fallback: {
+					content: [{ type: 'text', text: 'FALLBACK_TEXT' }],
+					structuredContent: {
+						confirmation_token: 'TOP-LEVEL-TOKEN',
+						expires_at: 1_700_000_000_000,
+						other: 'kept',
+					} as Record<string, unknown>,
+				},
+			});
+
+			expect(result.structuredContent.confirmation_token).toBeUndefined();
+			expect(result.structuredContent.expires_at).toBeUndefined();
+			expect(result.structuredContent.other).toBe('kept');
+		});
+	});
 });

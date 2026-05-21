@@ -108,8 +108,8 @@ export const toolDef: ToolDefinition = {
 	name: 'cancel_order',
 	description:
 		'[Cancel Order] 指定した注文IDの注文をキャンセルする。キャンセル後の注文情報を返す。Private API。' +
-		' ⚠️ 事前に preview_cancel_order で確認トークンを取得し、confirmation_token と token_expires_at を渡すこと。' +
-		' トークンなしの直接呼び出しは拒否される。',
+		' ⚠️ このツールは preview_cancel_order の elicitation accept 経路から内部的に呼ばれることを前提とする。' +
+		' confirmation_token はクライアントに返らない設計のため、LLM が直接 cancel_order を呼び出してもトークン検証で拒否される（HITL の第二防衛線）。',
 	inputSchema: CancelOrderInputSchema,
 	handler: async (args) => {
 		const result = await cancelOrder(
