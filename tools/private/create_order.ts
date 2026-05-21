@@ -22,7 +22,9 @@
 import { nowIso } from '../../lib/datetime.js';
 import { formatPair, formatPrice } from '../../lib/formatter.js';
 import { logTradeAction } from '../../lib/logger.js';
+import { fetchPairsSpec, validateOrderConstraints } from '../../lib/pairs.js';
 import { fail, ok, toStructured } from '../../lib/result.js';
+import { validateTriggerPrice } from '../../lib/trigger-price.js';
 import { getBitbankErrorMessage } from '../../src/lib/bitbank-errors.js';
 import { getDefaultClient, PrivateApiError } from '../../src/private/client.js';
 import { validateToken } from '../../src/private/confirmation.js';
@@ -73,6 +75,39 @@ export default async function createOrder(
 		// token_already_used / token_expired / token_invalid をそのまま errorType に伝播。
 		// 二重発注は errorType=token_already_used で検出可能。
 		return CreateOrderOutputSchema.parse(fail(tokenError.message, tokenError.code));
+	}
+
+	// preview から create までの間に状態が変化し得る項目のみ再検証する（方針 B）。
+	// 詳細: docs/private-api.md「検証の責務分担（preview と create）」節。
+	// pairs 取得失敗時は preview と同じく warning に留めて発注を継続する。
+	const warnings: string[] = [];
+	try {
+		const pairsMap = await fetchPairsSpec();
+		const spec = pairsMap.get(pair.toLowerCase());
+		const violation = validateOrderConstraints(spec, {
+			pair,
+			type,
+			side,
+			amount,
+			price,
+			trigger_price,
+			position_side,
+		});
+		if (violation) {
+			return CreateOrderOutputSchema.parse(fail(violation.message, 'validation_error'));
+		}
+	} catch (err: unknown) {
+		const msg = err instanceof Error ? err.message : String(err);
+		warnings.push(`ペア仕様（/spot/pairs）取得失敗のため最小数量・桁数チェックをスキップしました: ${msg}`);
+	}
+
+	// stop / stop_limit: トリガー価格が即時発動レベルになっていないか再チェック。
+	// preview からの時間差で市場が動いている可能性があるため。
+	if ((type === 'stop' || type === 'stop_limit') && trigger_price) {
+		const triggerError = await validateTriggerPrice(pair, side, Number(trigger_price));
+		if (triggerError) {
+			return CreateOrderOutputSchema.parse(fail(triggerError, 'validation_error'));
+		}
 	}
 
 	const client = getDefaultClient();
@@ -141,6 +176,13 @@ export default async function createOrder(
 		}
 		lines.push(`  ステータス: ${rawOrder.status}`);
 
+		if (warnings.length > 0) {
+			lines.push('');
+			for (const w of warnings) {
+				lines.push(`⚠️ ${w}`);
+			}
+		}
+
 		const summary = lines.join('\n');
 
 		return CreateOrderOutputSchema.parse(
@@ -153,6 +195,7 @@ export default async function createOrder(
 					pair,
 					side,
 					type,
+					...(warnings.length > 0 ? { warnings } : {}),
 					...(client.lastRateLimit ? { rateLimit: client.lastRateLimit } : {}),
 				},
 			),

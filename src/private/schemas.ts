@@ -779,6 +779,8 @@ export const CreateOrderMetaSchema = z.object({
 	pair: z.string(),
 	side: z.enum(['buy', 'sell']),
 	type: z.string(),
+	/** 事前再検証で発生した警告（例: /spot/pairs 取得失敗で最小数量・桁数チェックを省略） */
+	warnings: z.array(z.string()).optional(),
 });
 
 export const CreateOrderOutputSchema = z.union([

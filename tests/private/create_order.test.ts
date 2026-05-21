@@ -7,15 +7,33 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateToken } from '../../src/private/confirmation.js';
 import { assertFail, assertOk } from '../_assertResult.js';
+import { mockBitbankSuccess, mockSpotPairsResponse } from '../fixtures/private-api.js';
 
 const originalFetch = globalThis.fetch;
 
-/** fetch モックのセットアップ（呼び出し順に複数レスポンスを返せる） */
+/**
+ * fetch モックのセットアップ。
+ * `/spot/pairs`（create_order の事前再検証）と `/ticker`（stop 系のトリガー価格再チェック）
+ * はデフォルトの正常レスポンスを返し、それ以外のリクエスト（= 注文 API）は responses 配列を順に返す。
+ *
+ * 個別テストでペア仕様失敗 / トリガー乖離をテストする場合は `globalThis.fetch` を直接上書きする。
+ */
 function setupFetchMockSequence(responses: { body: unknown; status?: number }[]) {
-	const mock = vi.fn();
-	for (const { body, status = 200 } of responses) {
-		mock.mockResolvedValueOnce(new Response(JSON.stringify(body), { status }));
-	}
+	const orderResponses = [...responses];
+	const mock = vi.fn(async (input: RequestInfo | URL) => {
+		const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+		if (url.includes('/spot/pairs')) {
+			return new Response(JSON.stringify(mockSpotPairsResponse()), { status: 200 });
+		}
+		if (url.includes('/ticker')) {
+			return new Response(JSON.stringify(mockBitbankSuccess({ last: '15000000' })), { status: 200 });
+		}
+		const next = orderResponses.shift();
+		if (!next) {
+			throw new Error(`No mocked order response left for ${url}`);
+		}
+		return new Response(JSON.stringify(next.body), { status: next.status ?? 200 });
+	});
 	globalThis.fetch = mock as unknown as typeof fetch;
 	return mock;
 }
@@ -171,7 +189,9 @@ describe('create_order — エラーコード別ハンドリング', () => {
 	});
 
 	it('数量下限エラー（60003）に適切なメッセージ', async () => {
-		const params = { pair: 'btc_jpy', amount: '0.00000001', side: 'buy', type: 'limit', price: '14000000' };
+		// 事前再検証（pairs spec）を通過する amount を使い、bitbank API 側で 60003 が返るケースを模す。
+		// 実運用では pair 仕様の変更等で事前検証をすり抜け得るため、API エラーマッピングは引き続き必要。
+		const params = { pair: 'btc_jpy', amount: '0.001', side: 'buy', type: 'limit', price: '14000000' };
 		const { confirmation_token, token_expires_at } = validToken(params);
 
 		setupFetchMockSequence([{ body: { success: 0, data: { code: 60003 } }, status: 400 }]);
@@ -494,13 +514,15 @@ describe('create_order — トークン再利用拒否（ワンショット）',
 
 describe('create_order — stop_limit / post_only / trigger_price', () => {
 	it('stop_limit 注文で trigger_price がサマリーに含まれる', async () => {
+		// デフォルト ticker mock は last=15_000_000 を返すため、
+		// stop buy のトリガー価格は 15_000_000 超に設定（即時発動チェックを通過させる）
 		const params = {
 			pair: 'btc_jpy',
 			amount: '0.001',
 			side: 'buy',
 			type: 'stop_limit',
-			price: '14500000',
-			trigger_price: '14000000',
+			price: '16500000',
+			trigger_price: '16000000',
 		};
 		const { confirmation_token, token_expires_at } = validToken(params);
 
@@ -509,8 +531,8 @@ describe('create_order — stop_limit / post_only / trigger_price', () => {
 				body: orderSuccessResponse({
 					side: 'buy',
 					type: 'stop_limit',
-					price: '14500000',
-					trigger_price: '14000000',
+					price: '16500000',
+					trigger_price: '16000000',
 				}),
 			},
 		]);
@@ -719,7 +741,10 @@ describe('create_order — 信用取引（position_side）', () => {
 			token_expires_at,
 		});
 
-		const requestBody = JSON.parse(fetchMock.mock.calls[0][1].body as string);
+		// /spot/pairs / /ticker などのデフォルトモックを除外し、注文 API への呼び出しを特定する
+		const orderCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('/user/spot/order'));
+		expect(orderCall).toBeDefined();
+		const requestBody = JSON.parse((orderCall as unknown as [unknown, { body: string }])[1].body);
 		expect(requestBody.position_side).toBe('long');
 	});
 });
@@ -780,9 +805,10 @@ describe('create_order — 信用取引エラーコード', () => {
 	});
 
 	it('建玉数量超過エラー（50062）に適切なメッセージ', async () => {
+		// 事前再検証（pairs spec）を通過する amount を使い、bitbank API 側で 50062 が返るケースを模す
 		const params = {
 			pair: 'btc_jpy',
-			amount: '100',
+			amount: '0.001',
 			side: 'sell',
 			type: 'market',
 			position_side: 'long',
@@ -830,5 +856,236 @@ describe('create_order — 信用取引エラーコード', () => {
 
 		assertFail(result);
 		expect(result.summary).toContain('信用取引');
+	});
+});
+
+// 方針 B（preview = 主検証、create = 軽量再検証）の create 側ガード。
+// preview から create までの間に状態が変化し得る項目（pair 仕様 / 市場価格）を
+// 軽く再チェックする。詳細は docs/private-api.md「検証の責務分担」節。
+describe('create_order — 事前再検証（ペア仕様 / トリガー価格）', () => {
+	it('amount が最小注文数量を下回ると validation_error で発注前に弾く', async () => {
+		// mockSpotPairsResponse の btc_jpy は unit_amount=0.0001 / amount_digits=8
+		const params = { pair: 'btc_jpy', amount: '0.00001', side: 'buy', type: 'limit', price: '14000000' };
+		const { confirmation_token, token_expires_at } = validToken(params);
+
+		const fetchMock = setupFetchMockSequence([
+			// 注文 API が呼ばれてはいけない（pairs 段階で停止する）
+			{ body: orderSuccessResponse({ side: 'buy', type: 'limit', price: '14000000' }) },
+		]);
+
+		const { default: createOrder } = await import('../../tools/private/create_order.js');
+		const result = await createOrder({
+			...params,
+			side: params.side as 'buy' | 'sell',
+			type: params.type as 'limit',
+			confirmation_token,
+			token_expires_at,
+		});
+
+		assertFail(result);
+		expect(result.meta.errorType).toBe('validation_error');
+		expect(result.summary).toContain('最小注文数量');
+		// 注文 API が呼ばれていないこと
+		const orderCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('/user/spot/order'));
+		expect(orderCall).toBeUndefined();
+	});
+
+	it('/spot/pairs 取得失敗時は warning に留めて発注を継続する', async () => {
+		const params = { pair: 'btc_jpy', amount: '0.001', side: 'buy', type: 'limit', price: '14000000' };
+		const { confirmation_token, token_expires_at } = validToken(params);
+
+		// /spot/pairs は 500、注文 API は成功
+		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+			if (url.includes('/spot/pairs')) {
+				return new Response('boom', { status: 500 });
+			}
+			return new Response(JSON.stringify(orderSuccessResponse({ side: 'buy', type: 'limit', price: '14000000' })), {
+				status: 200,
+			});
+		}) as unknown as typeof fetch;
+
+		const { default: createOrder } = await import('../../tools/private/create_order.js');
+		const result = await createOrder({
+			...params,
+			side: params.side as 'buy' | 'sell',
+			type: params.type as 'limit',
+			confirmation_token,
+			token_expires_at,
+		});
+
+		assertOk(result);
+		expect(result.meta.warnings).toBeDefined();
+		expect(result.meta.warnings?.[0]).toContain('/spot/pairs');
+		// summary 末尾にも warning が出る
+		expect(result.summary).toContain('スキップ');
+		expect(result.summary).toContain('注文発注完了');
+	});
+
+	it('/spot/pairs ネットワークエラー時も warning でフォールバックする', async () => {
+		const params = { pair: 'btc_jpy', amount: '0.001', side: 'sell', type: 'market' };
+		const { confirmation_token, token_expires_at } = validToken(params);
+
+		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+			if (url.includes('/spot/pairs')) {
+				throw new TypeError('fetch failed');
+			}
+			return new Response(JSON.stringify(orderSuccessResponse({ side: 'sell', type: 'market' })), { status: 200 });
+		}) as unknown as typeof fetch;
+
+		const { default: createOrder } = await import('../../tools/private/create_order.js');
+		const result = await createOrder({
+			...params,
+			side: params.side as 'buy' | 'sell',
+			type: params.type as 'market',
+			confirmation_token,
+			token_expires_at,
+		});
+
+		assertOk(result);
+		expect(result.meta.warnings?.[0]).toContain('/spot/pairs');
+	});
+
+	it('stop sell でトリガー価格が現在価格以上に乖離していると validation_error で弾く', async () => {
+		// preview 時点では trigger=13_000_000 < current=15_000_000 だったが、
+		// create 直前に市場が下落して current=12_000_000 になり、即時発動レベルになったケース
+		const params = {
+			pair: 'btc_jpy',
+			amount: '0.001',
+			side: 'sell',
+			type: 'stop',
+			trigger_price: '13000000',
+		};
+		const { confirmation_token, token_expires_at } = validToken(params);
+
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+			if (url.includes('/spot/pairs')) {
+				return new Response(JSON.stringify(mockSpotPairsResponse()), { status: 200 });
+			}
+			if (url.includes('/ticker')) {
+				// 現在価格 12_000_000 → trigger 13_000_000 >= current で即時発動
+				return new Response(JSON.stringify(mockBitbankSuccess({ last: '12000000' })), { status: 200 });
+			}
+			return new Response(
+				JSON.stringify(orderSuccessResponse({ side: 'sell', type: 'stop', trigger_price: '13000000' })),
+				{ status: 200 },
+			);
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const { default: createOrder } = await import('../../tools/private/create_order.js');
+		const result = await createOrder({
+			...params,
+			side: params.side as 'buy' | 'sell',
+			type: params.type as 'stop',
+			confirmation_token,
+			token_expires_at,
+		});
+
+		assertFail(result);
+		expect(result.meta.errorType).toBe('validation_error');
+		expect(result.summary).toContain('即時発動');
+		// 注文 API が呼ばれていないこと
+		const orderCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('/user/spot/order'));
+		expect(orderCall).toBeUndefined();
+	});
+
+	it('stop buy でトリガー価格が現在価格以下に乖離していると validation_error で弾く', async () => {
+		const params = {
+			pair: 'btc_jpy',
+			amount: '0.001',
+			side: 'buy',
+			type: 'stop',
+			trigger_price: '14000000',
+		};
+		const { confirmation_token, token_expires_at } = validToken(params);
+
+		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+			if (url.includes('/spot/pairs')) {
+				return new Response(JSON.stringify(mockSpotPairsResponse()), { status: 200 });
+			}
+			if (url.includes('/ticker')) {
+				// 現在価格 15_000_000 → trigger 14_000_000 <= current で即時発動
+				return new Response(JSON.stringify(mockBitbankSuccess({ last: '15000000' })), { status: 200 });
+			}
+			return new Response(JSON.stringify({ success: 1, data: {} }), { status: 200 });
+		}) as unknown as typeof fetch;
+
+		const { default: createOrder } = await import('../../tools/private/create_order.js');
+		const result = await createOrder({
+			...params,
+			side: params.side as 'buy' | 'sell',
+			type: params.type as 'stop',
+			confirmation_token,
+			token_expires_at,
+		});
+
+		assertFail(result);
+		expect(result.meta.errorType).toBe('validation_error');
+		expect(result.summary).toContain('即時発動');
+	});
+
+	it('limit 注文ではトリガー価格チェック（ticker fetch）が走らない', async () => {
+		const params = { pair: 'btc_jpy', amount: '0.001', side: 'buy', type: 'limit', price: '14000000' };
+		const { confirmation_token, token_expires_at } = validToken(params);
+
+		const fetchMock = setupFetchMockSequence([
+			{ body: orderSuccessResponse({ side: 'buy', type: 'limit', price: '14000000' }) },
+		]);
+
+		const { default: createOrder } = await import('../../tools/private/create_order.js');
+		const result = await createOrder({
+			...params,
+			side: params.side as 'buy' | 'sell',
+			type: params.type as 'limit',
+			confirmation_token,
+			token_expires_at,
+		});
+
+		assertOk(result);
+		// ticker への呼び出しが発生していないこと（stop 系のみで実行される最適化）
+		const tickerCall = fetchMock.mock.calls.find((c) => String(c[0]).includes('/ticker'));
+		expect(tickerCall).toBeUndefined();
+	});
+
+	it('/ticker 取得失敗時は trigger 検証をスキップして発注を継続する', async () => {
+		const params = {
+			pair: 'btc_jpy',
+			amount: '0.001',
+			side: 'sell',
+			type: 'stop',
+			trigger_price: '13000000',
+		};
+		const { confirmation_token, token_expires_at } = validToken(params);
+
+		globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+			if (url.includes('/spot/pairs')) {
+				return new Response(JSON.stringify(mockSpotPairsResponse()), { status: 200 });
+			}
+			if (url.includes('/ticker')) {
+				return new Response('ticker boom', { status: 500 });
+			}
+			return new Response(
+				JSON.stringify(orderSuccessResponse({ side: 'sell', type: 'stop', trigger_price: '13000000' })),
+				{ status: 200 },
+			);
+		}) as unknown as typeof fetch;
+
+		const { default: createOrder } = await import('../../tools/private/create_order.js');
+		const result = await createOrder({
+			...params,
+			side: params.side as 'buy' | 'sell',
+			type: params.type as 'stop',
+			confirmation_token,
+			token_expires_at,
+		});
+
+		// trigger 検証は静かにスキップ（null 返却）し、発注は継続する
+		assertOk(result);
+		expect(result.summary).toContain('注文発注完了');
 	});
 });
