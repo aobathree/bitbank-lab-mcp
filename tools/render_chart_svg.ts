@@ -232,8 +232,6 @@ export default async function renderChartSvg(
 	const xs = displayItems.map((_, i) => i);
 	const highs = displayItems.map((d) => d.high as number);
 	const lows = displayItems.map((d) => d.low as number);
-	const _xMin = 0;
-	const _xMax = xs.length - 1;
 	// forwardShift は上部で meta.shift から取得済み
 
 	// Y軸の範囲を、表示されるすべての要素から計算

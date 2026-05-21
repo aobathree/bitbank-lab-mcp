@@ -1,5 +1,5 @@
 import type { z } from 'zod';
-import { formatPair, timeframeLabel } from '../../lib/formatter.js';
+import { formatPair } from '../../lib/formatter.js';
 import analyzeFibonacci from '../../tools/analyze_fibonacci.js';
 import { AnalyzeFibonacciInputSchema, AnalyzeFibonacciOutputSchema } from '../schemas.js';
 import type { ToolDefinition } from '../tool-definition.js';
@@ -20,7 +20,6 @@ export const toolDef: ToolDefinition = {
 		const data = res.data;
 		const meta = res.meta;
 		const pair = String(data.pair || (args as Record<string, unknown>).pair || 'btc_jpy');
-		const _tfLabel = timeframeLabel(String(data.timeframe || '1day'));
 		const pairLabel = formatPair(pair);
 
 		// Build text content for LLM

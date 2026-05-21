@@ -1,5 +1,4 @@
 import type { z } from 'zod';
-import { formatSummary } from '../lib/formatter.js';
 import { avg } from '../lib/math.js';
 import { fail, failFromError, failFromValidation, ok } from '../lib/result.js';
 import { createMeta, ensurePair } from '../lib/validate.js';
@@ -366,12 +365,6 @@ export default async function analyzeIchimokuSnapshot(
 		if (tenkanKijun === 'bearish') tags.push('tk_bearish');
 		if (cloudSlope === 'rising') tags.push('cloud_rising');
 		if (cloudSlope === 'falling') tags.push('cloud_falling');
-
-		const _summary = formatSummary({
-			pair: chk.pair,
-			latest: close ?? undefined,
-			extra: `pos=${pricePosition} tk=${tenkanKijun} cloud=${cloudSlope}`,
-		});
 
 		// Signals (Phase 2)
 		// 三役: 価格>雲上、転換>基準、遅行>当時価格(近似: 現在価格>26本前)

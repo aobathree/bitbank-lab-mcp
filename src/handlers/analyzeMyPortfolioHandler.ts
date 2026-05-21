@@ -178,7 +178,6 @@ export default async function analyzeMyPortfolioHandler(args: {
 		let totalJpyValue = 0;
 		let _totalCostBasis = 0;
 		let totalRealizedPnl = 0;
-		let _hasCostData = false;
 
 		const holdings = nonZeroAssets.map((a) => {
 			const amount = a.onhand_amount;
@@ -214,7 +213,6 @@ export default async function analyzeMyPortfolioHandler(args: {
 
 			if (pnl?.cost_basis != null) {
 				_totalCostBasis += pnl.cost_basis;
-				_hasCostData = true;
 			}
 			if (pnl) {
 				totalRealizedPnl += pnl.realized_pnl;

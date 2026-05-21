@@ -25,12 +25,6 @@ interface RawAsset {
 	stop_withdrawal: boolean;
 }
 
-/** ticker から取得する最低限の価格情報 */
-interface _TickerPrice {
-	pair: string;
-	last: number;
-}
-
 /**
  * public API の tickers_jpy から各通貨の最新価格を取得する。
  * 失敗しても get_my_assets 自体は動作する（partial_data_warning）。

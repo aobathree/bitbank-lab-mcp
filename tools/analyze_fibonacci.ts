@@ -421,7 +421,6 @@ export default async function analyzeFibonacci(opts: Record<string, unknown> = {
 			extensions = calculateExtensions(swingHigh, swingLow, trend, currentPrice, EXTENSION_RATIOS);
 		}
 
-		const _allLevels = [...levels, ...extensions];
 		const position = findPosition(levels.length > 0 ? levels : extensions, currentPrice);
 
 		// Calculate historical reaction stats (Feature #3)

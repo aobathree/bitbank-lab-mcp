@@ -1,4 +1,4 @@
-import { dayjs, daysAgo, today, toIsoTime, toIsoWithTz } from '../lib/datetime.js';
+import { dayjs, today, toIsoTime, toIsoWithTz } from '../lib/datetime.js';
 import { getErrorMessage } from '../lib/error.js';
 import { formatSummary } from '../lib/formatter.js';
 import { BITBANK_API_BASE, DEFAULT_RETRIES, fetchJsonWithRateLimit, type RateLimitInfo } from '../lib/http.js';
@@ -122,11 +122,6 @@ async function fetchSingleDay(
 		// 存在しない日や取得失敗は空配列を返す（エラーも保持）
 		return { rows: [], rateLimit: null, error: e };
 	}
-}
-
-// N日前の日付をYYYYMMDD形式で取得
-function _getDateNDaysAgo(n: number): string {
-	return daysAgo(n, 'YYYYMMDD');
 }
 
 export default async function getCandles(

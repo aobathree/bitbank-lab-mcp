@@ -44,7 +44,6 @@ type NormalizedTxn = {
  */
 function formatTransactionsSummary(pair: string, transactions: NormalizedTxn[], buys: number, sells: number): string {
 	const pairDisplay = formatPair(pair);
-	const _isJpy = pair.toLowerCase().includes('jpy');
 	const baseCurrency = pair.split('_')[0]?.toUpperCase() ?? '';
 	const lines: string[] = [];
 

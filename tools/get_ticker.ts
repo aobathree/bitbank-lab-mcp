@@ -17,7 +17,6 @@ export interface GetTickerOptions {
  */
 function formatTickerSummary(pair: string, d: Record<string, unknown>): string {
 	const pairDisplay = formatPair(pair);
-	const _isJpy = pair.toLowerCase().includes('jpy');
 
 	const last = toNum(d.last);
 	const open = toNum(d.open);

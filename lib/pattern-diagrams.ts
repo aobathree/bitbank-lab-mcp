@@ -66,7 +66,6 @@ export function generatePatternDiagram(
 	options?: { isForming?: boolean },
 ): PatternDiagramData {
 	const startDate = formatDateIsoShort(range.start);
-	const _endDate = formatDateIsoShort(range.end);
 	const identifier = `${patternType}-diagram-${startDate}`;
 	const title = `${getPatternLabel(patternType)}構造図 (${formatDateShort(range.start)}-${formatDateShort(range.end)})`;
 	const dashed = options?.isForming ? '5,5' : '';
