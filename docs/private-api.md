@@ -160,8 +160,8 @@ MCP 仕様（SEP-1624 の整理）では `CallToolResult.content` と `structure
 `confirmation_token` は本来「ユーザーの最終確認を経たことの証拠」であり、LLM が独断で引用して `create_order` を呼べる文字列にしてはならない。実装は次の階層で扱う:
 
 1. **第一選択（elicitation 対応ホスト）** — `preview_order` ハンドラ内で `server.elicitInput` によりユーザー確認 → 同一ハンドラ内で `create_order` を呼び出して完結。**トークンはサーバープロセス内に閉じ、LLM/クライアントには返らない**。Claude Desktop / Claude Code のうち elicitation 対応版はこの経路。
-2. **第二選択（MCP Apps / SEP-1865 対応ホスト）** — `_meta.ui.resourceUri` 経由で iframe UI を表示し、UI が `app.callServerTool('create_order', ...)` でトークンを直接渡す。トークンは LLM コンテキストを通らない。
-3. **フォールバック（elicitation も SEP-1865 も非対応のホスト）** — 現状は `structuredContent.data.confirmation_token` でトークンを返している。これは**過渡的なフォールバックであり、`structuredContent` を LLM 非可視の安全境界とみなしているわけではない**。`content[0].text` 側にはトークンを載せず、「ユーザー確認なしに `create_order` を呼ばない」旨をツール説明文と本文末尾の両方で繰り返している。今後より安全な代替（後述）へ寄せていく。
+2. **第二選択（MCP Apps / SEP-1865 対応ホスト）** — `_meta.ui.resourceUri` 経由で iframe UI を表示する。ただし本 PR 時点では UI 側からの execute 経路は未実装であり、pending action store と UI origin 検証を別 PR で整備するまでトークンを UI にも渡さない。
+3. **フォールバック（elicitation も SEP-1865 も非対応のホスト）** — `content` / `structuredContent` / `_meta` のいずれにも `confirmation_token` / `expires_at` を返さない。プレビュー内容だけを返し、「このホストでは取引実行に対応していない」旨を `content[0].text` に明記する。LLM が `create_order` / `cancel_order` / `cancel_orders` を直接呼んでも、トークン検証で拒否される。
 
 なお `content[0].text` には常に以下を載せる（LLM のハルシネーション防止）:
 
@@ -171,9 +171,9 @@ MCP 仕様（SEP-1624 の整理）では `CallToolResult.content` と `structure
 
 これにより、LLM が `structuredContent` をまったく見られないクライアント（Cursor / Windsurf 系）でも、ユーザー確認の必要性と概要を理解した上で対話を継続できる。
 
-#### 将来の代替案（実装未着手）
+#### 将来の代替案
 
-`structuredContent` も LLM 経路となり得る以上、トークンを `structuredContent` に置く現フォールバックは恒久解ではない。下記は別 PR で検討する設計案:
+elicitation 非対応ホストでも安全に HITL 実行できるようにするには、下記を別 PR で検討する:
 
 - **サーバー側 pending action store** — `preview_*` がサーバー内 Map に pending entry を作り、短い不透明 ID（HMAC ではない）を返す。`create_order` 等は ID と「独立したユーザー合意シグナル」の両方を要求する。LLM が ID 単体を引用しても発注に至らない。
 - **`_meta` 経由の UI 専用チャネル** — MCP Apps 対応ホストでは `_meta` をコンポーネント側にだけ転送する仕様（OpenAI Apps SDK ドキュメント参照）を利用する。ただし MCP 基本仕様としては「`_meta` は LLM 非可視」を保証しないため、これ単体で安全境界とはしない。
