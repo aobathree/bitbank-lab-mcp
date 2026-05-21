@@ -94,6 +94,11 @@ export class BitbankPrivateClient {
 
 	/**
 	 * POST リクエスト
+	 *
+	 * 状態変化を伴う POST（注文発注・キャンセル等）はネットワーク/タイムアウト/5xx
+	 * 全経路で自動リトライしない。リトライ時の二重注文を防ぐため defense-in-depth として
+	 * `retries: 0` を強制する。再試行はユーザー起点で preview から再実行する想定。
+	 *
 	 * @param path - API パス
 	 * @param body - リクエストボディ
 	 */
@@ -102,23 +107,32 @@ export class BitbankPrivateClient {
 		const jsonBody = JSON.stringify(body);
 		const headers = createPostAuthHeaders(jsonBody);
 
-		return this.request<T>(url, {
-			method: 'POST',
-			headers: {
-				...headers,
-				'Content-Type': 'application/json',
+		return this.request<T>(
+			url,
+			{
+				method: 'POST',
+				headers: {
+					...headers,
+					'Content-Type': 'application/json',
+				},
+				body: jsonBody,
 			},
-			body: jsonBody,
-		});
+			{ retries: 0 },
+		);
 	}
 
 	/**
 	 * 共通リクエスト処理（リトライ・タイムアウト・エラーハンドリング）
+	 *
+	 * @param opts.retries - リトライ上限のオーバーライド。指定時はこの値、
+	 *   未指定なら `this.maxRetries` を採用する。POST のような非冪等リクエストは
+	 *   呼び出し側で `0` を渡す。
 	 */
-	private async request<T>(url: string, init: RequestInit): Promise<T> {
+	private async request<T>(url: string, init: RequestInit, opts: { retries?: number } = {}): Promise<T> {
+		const maxRetries = opts.retries ?? this.maxRetries;
 		let lastErr: unknown;
 
-		for (let attempt = 0; attempt <= this.maxRetries; attempt++) {
+		for (let attempt = 0; attempt <= maxRetries; attempt++) {
 			const ctrl = new AbortController();
 			const timer = setTimeout(() => ctrl.abort(), this.timeoutMs);
 
@@ -130,7 +144,7 @@ export class BitbankPrivateClient {
 				if (res.status === 429) {
 					const retryAfter = res.headers.get('Retry-After');
 					const waitMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : 1000;
-					if (attempt < this.maxRetries) {
+					if (attempt < maxRetries) {
 						await new Promise((r) => setTimeout(r, waitMs));
 						continue;
 					}
@@ -143,7 +157,7 @@ export class BitbankPrivateClient {
 
 				// 5xx Server Error
 				if (res.status >= 500) {
-					if (attempt < this.maxRetries) {
+					if (attempt < maxRetries) {
 						await new Promise((r) => setTimeout(r, 200 * 2 ** attempt));
 						continue;
 					}
@@ -180,7 +194,7 @@ export class BitbankPrivateClient {
 
 					// レート制限エラーはリトライ
 					if (errorCode != null && RATE_LIMIT_CODES.has(errorCode)) {
-						if (attempt < this.maxRetries) {
+						if (attempt < maxRetries) {
 							await new Promise((r) => setTimeout(r, 1000 * 2 ** attempt));
 							continue;
 						}
@@ -201,7 +215,7 @@ export class BitbankPrivateClient {
 					lastErr = err;
 				}
 
-				if (attempt < this.maxRetries) {
+				if (attempt < maxRetries) {
 					await new Promise((r) => setTimeout(r, 200 * 2 ** attempt));
 				}
 			}

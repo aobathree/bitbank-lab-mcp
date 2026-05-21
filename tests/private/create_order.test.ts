@@ -477,6 +477,46 @@ describe('create_order — handler (toolDef)', () => {
 	});
 });
 
+describe('create_order — POST 自動リトライ無効化（二重発注防止）', () => {
+	// 注文 API（POST /v1/user/spot/order）が 5xx を返した場合、
+	// client.post は retries=0 を強制するため再送せず単発で失敗する。
+	// 失敗した発注がサーバー側で実際には受理されていた場合でも、
+	// クライアント側のリトライで同じ注文が二重に飛ぶ事故は起きない。
+	it('5xx 時に注文 API（POST）は 1 回しか呼ばれない', async () => {
+		const params = { pair: 'btc_jpy', amount: '0.001', side: 'buy', type: 'limit', price: '14000000' };
+		const { confirmation_token, token_expires_at } = validToken(params);
+
+		const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+			const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+			if (url.includes('/spot/pairs')) {
+				return new Response(JSON.stringify(mockSpotPairsResponse()), { status: 200 });
+			}
+			if (url.includes('/ticker')) {
+				return new Response(JSON.stringify(mockBitbankSuccess({ last: '15000000' })), { status: 200 });
+			}
+			// 注文 API は常に 5xx を返す
+			return new Response('', { status: 500 });
+		});
+		globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+		const { default: createOrder } = await import('../../tools/private/create_order.js');
+		const result = await createOrder({
+			...params,
+			side: params.side as 'buy' | 'sell',
+			type: params.type as 'limit',
+			confirmation_token,
+			token_expires_at,
+		});
+
+		assertFail(result);
+		expect(result.meta.errorType).toBe('upstream_error');
+
+		// /user/spot/order への POST 呼び出しが正確に 1 回であることを assert（旧実装では 3 回叩かれていた）
+		const orderCalls = fetchMock.mock.calls.filter((c) => String(c[0]).includes('/user/spot/order'));
+		expect(orderCalls).toHaveLength(1);
+	});
+});
+
 describe('create_order — トークン再利用拒否（ワンショット）', () => {
 	it('同一 confirmation_token で 2 回叩くと 2 回目は token_already_used で失敗する', async () => {
 		const params = { pair: 'btc_jpy', amount: '0.001', side: 'buy', type: 'limit', price: '14000000' };

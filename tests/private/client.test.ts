@@ -256,6 +256,101 @@ describe('BitbankPrivateClient', () => {
 		});
 	});
 
+	describe('POST 系リクエストの自動リトライ無効化', () => {
+		// 二重発注事故を防ぐため POST 系は ネットワーク / タイムアウト / 5xx の
+		// 全経路で自動リトライしない（再試行は preview から人間が再実行する想定）。
+		// GET は冪等なので従来通り maxRetries まで再試行する。
+		it('5xx 時に POST は 1 回しか呼ばれない（maxRetries=2 設定でも）', async () => {
+			const fetcher = createMockFetcher([
+				new Response('', { status: 500 }),
+				new Response('', { status: 500 }),
+				new Response('', { status: 500 }),
+			]);
+			const client = new BitbankPrivateClient({ fetcher, maxRetries: 2, timeoutMs: 5000 });
+
+			try {
+				await client.post('/v1/user/spot/order', { pair: 'btc_jpy' });
+				expect.fail('should throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(PrivateApiError);
+				expect((err as PrivateApiError).errorType).toBe('upstream_error');
+			}
+			expect(fetcher.calls).toHaveLength(1);
+		});
+
+		it('タイムアウト時に POST は 1 回しか呼ばれない', async () => {
+			let callCount = 0;
+			const fetcher = (async (_url: string, init: RequestInit) => {
+				callCount++;
+				return new Promise<Response>((_resolve, reject) => {
+					const signal = init.signal;
+					if (signal) {
+						signal.addEventListener('abort', () => {
+							const err = new Error('The operation was aborted');
+							err.name = 'AbortError';
+							reject(err);
+						});
+					}
+				});
+			}) as unknown as typeof fetch;
+			const client = new BitbankPrivateClient({ fetcher, maxRetries: 2, timeoutMs: 50 });
+
+			try {
+				await client.post('/v1/user/spot/order', { pair: 'btc_jpy' });
+				expect.fail('should throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(PrivateApiError);
+				expect((err as PrivateApiError).message).toContain('タイムアウト');
+			}
+			expect(callCount).toBe(1);
+		});
+
+		it('ネットワークエラー時に POST は 1 回しか呼ばれない', async () => {
+			let callCount = 0;
+			const fetcher = (async () => {
+				callCount++;
+				throw new TypeError('fetch failed');
+			}) as unknown as typeof fetch;
+			const client = new BitbankPrivateClient({ fetcher, maxRetries: 2, timeoutMs: 5000 });
+
+			try {
+				await client.post('/v1/user/spot/order', { pair: 'btc_jpy' });
+				expect.fail('should throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(PrivateApiError);
+				expect((err as PrivateApiError).errorType).toBe('upstream_error');
+			}
+			expect(callCount).toBe(1);
+		});
+
+		it('429 時にも POST は 1 回しか呼ばれない（rate_limit_error をそのまま throw）', async () => {
+			const fetcher = createMockFetcher([new Response('', { status: 429, headers: { 'Retry-After': '0' } })]);
+			const client = new BitbankPrivateClient({ fetcher, maxRetries: 2, timeoutMs: 5000 });
+
+			try {
+				await client.post('/v1/user/spot/order', { pair: 'btc_jpy' });
+				expect.fail('should throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(PrivateApiError);
+				expect((err as PrivateApiError).errorType).toBe('rate_limit_error');
+			}
+			expect(fetcher.calls).toHaveLength(1);
+		});
+
+		it('GET は 5xx で従来通りリトライされる（POST 専用の無効化であることを担保）', async () => {
+			const fetcher = createMockFetcher([
+				new Response('', { status: 500 }),
+				new Response('', { status: 502 }),
+				jsonResponse(mockBitbankSuccess({ ok: true })),
+			]);
+			const client = new BitbankPrivateClient({ fetcher, maxRetries: 2, timeoutMs: 5000 });
+
+			const result = await client.get<{ ok: boolean }>('/v1/user/assets');
+			expect(result.ok).toBe(true);
+			expect(fetcher.calls).toHaveLength(3);
+		});
+	});
+
 	describe('タイムアウト', () => {
 		it('timeoutMs 超過でエラーを投げる', async () => {
 			const fetcher = (async (_url: string, init: RequestInit) => {
