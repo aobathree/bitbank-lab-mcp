@@ -6,9 +6,17 @@ import { EPSILON } from '../../lib/math.js';
 import { generatePatternDiagram } from '../../lib/pattern-diagrams.js';
 import { deduplicatePatterns, finalizeConf, periodScoreDays } from './helpers.js';
 import { clamp01, marginFromRelDev, relDev } from './regression.js';
-import { DOUBLE_LEVEL_MAX_PCT, isSameLevel, validatePriorTrend } from './structural.js';
+import { DOUBLE_LEVEL_MAX_PCT, isSameLevel, type PriorTrendResult, validatePriorTrend } from './structural.js';
 import type { Pivot } from './swing.js';
-import { type CandleData, type DetectContext, type DetectResult, type PatternEntry, pushCand } from './types.js';
+import {
+	type CandleData,
+	type DetectContext,
+	type DetectResult,
+	type PatternConfirmation,
+	type PatternEntry,
+	type PatternPrecedingTrend,
+	pushCand,
+} from './types.js';
 
 // ── Configuration ──
 const MIN_PIVOT_DISTANCE_BARS = 5;
@@ -45,6 +53,38 @@ function findBreakoutIdx(
 		if (direction === 'above' && closeK > necklinePrice * (1 + BREAKOUT_BUFFER_PCT)) return k;
 	}
 	return -1;
+}
+
+// ── Helper: PriorTrendResult → PatternPrecedingTrend ──
+
+function buildPrecedingTrend(
+	candles: CandleData[],
+	trend: PriorTrendResult,
+	startIdx: number,
+): PatternPrecedingTrend | undefined {
+	const startIso = candles[trend.priorStartIdx]?.isoTime;
+	const endIso = candles[startIdx]?.isoTime;
+	if (!startIso || !endIso) return undefined;
+	return {
+		start: startIso,
+		end: endIso,
+		direction: trend.classification,
+		returnPct: Number((trend.priorReturn * 100).toFixed(2)),
+		lookbackBars: trend.lookbackBars,
+	};
+}
+
+// ── Helper: ネックラインブレイク確認 → PatternConfirmation ──
+
+function buildNecklineConfirmation(candles: CandleData[], breakoutIdx: number): PatternConfirmation | undefined {
+	const date = candles[breakoutIdx]?.isoTime;
+	if (!date) return undefined;
+	return {
+		type: 'neckline_breakout',
+		date,
+		idx: breakoutIdx,
+		price: Number(candles[breakoutIdx]?.close ?? NaN),
+	};
 }
 
 // ── Helper: ダブルトップのサイズ検証（不合格理由 or null） ──
@@ -187,11 +227,20 @@ function findRelaxedDoubleTop(
 		);
 		const dtRelAvgPeak = (a.price + c.price) / 2;
 		const dtRelTarget = Math.round(necklinePrice - (dtRelAvgPeak - necklinePrice));
+		const structureRange =
+			candles[a.idx]?.isoTime && candles[c.idx]?.isoTime
+				? { start: candles[a.idx].isoTime as string, end: candles[c.idx].isoTime as string }
+				: undefined;
+		const confirmation = buildNecklineConfirmation(candles, breakoutIdx);
+		const precedingTrend = buildPrecedingTrend(candles, trend, a.idx);
 
 		return {
 			type: 'double_top',
 			confidence,
 			range: { start, end },
+			...(structureRange ? { structureRange } : {}),
+			...(confirmation ? { confirmation } : {}),
+			...(precedingTrend ? { precedingTrend } : {}),
 			pivots: [a, b, c],
 			neckline,
 			trendlineLabel: 'ネックライン',
@@ -324,11 +373,20 @@ function findRelaxedDoubleBottom(
 		);
 		const dbRelAvgValley = (a.price + c.price) / 2;
 		const dbRelTarget = Math.round(necklinePrice + (necklinePrice - dbRelAvgValley));
+		const structureRange =
+			candles[a.idx]?.isoTime && candles[c.idx]?.isoTime
+				? { start: candles[a.idx].isoTime as string, end: candles[c.idx].isoTime as string }
+				: undefined;
+		const confirmation = buildNecklineConfirmation(candles, breakoutIdx);
+		const precedingTrend = buildPrecedingTrend(candles, trend, a.idx);
 
 		return {
 			type: 'double_bottom',
 			confidence,
 			range: { start, end },
+			...(structureRange ? { structureRange } : {}),
+			...(confirmation ? { confirmation } : {}),
+			...(precedingTrend ? { precedingTrend } : {}),
 			pivots: [a, b, c],
 			neckline,
 			trendlineLabel: 'ネックライン',
@@ -408,11 +466,16 @@ function tryFormingDoubleTop(ctx: DetectContext): PatternEntry | null {
 	const start = isoAt(leftPeak.idx);
 	const end = isoAt(lastIdx);
 	const formDtTarget = Math.round(valley.price - (leftPeak.price - valley.price));
+	const structureRange = start && end ? { start, end } : undefined;
+	const precedingTrend = buildPrecedingTrend(candles, trend, leftPeak.idx);
 
 	return {
 		type: 'double_top',
 		confidence,
 		range: { start, end },
+		...(structureRange ? { structureRange } : {}),
+		confirmation: { type: 'not_confirmed' },
+		...(precedingTrend ? { precedingTrend } : {}),
 		status: 'forming',
 		pivots: [
 			{ idx: leftPeak.idx, price: leftPeak.price, kind: 'H' as const },
@@ -506,11 +569,20 @@ function tryFormingDoubleBottom(ctx: DetectContext): PatternEntry | null {
 		const end = isoAt(lastIdx);
 		const formDbAvgValley = (leftValley.price + rightValley.price) / 2;
 		const formDbTarget = Math.round(midPeak.price + (midPeak.price - formDbAvgValley));
+		// 形成中ダブルボトムは確定済みの leftValley〜rightValley が構成点。
+		// 現在足は構成点に含めない（range は lastIdx までを含むが、structureRange は構成点に閉じる）
+		const structStart = isoAt(leftValley.idx);
+		const structEnd = isoAt(rightValley.idx);
+		const structureRange = structStart && structEnd ? { start: structStart, end: structEnd } : undefined;
+		const precedingTrend = buildPrecedingTrend(candles, trend, leftValley.idx);
 
 		return {
 			type: 'double_bottom',
 			confidence,
 			range: { start, end },
+			...(structureRange ? { structureRange } : {}),
+			confirmation: { type: 'not_confirmed' },
+			...(precedingTrend ? { precedingTrend } : {}),
 			status: 'forming',
 			pivots: [
 				{ idx: leftValley.idx, price: leftValley.price, kind: 'L' as const },
@@ -654,10 +726,19 @@ export function detectDoubles(ctx: DetectContext): DetectResult {
 				if (Number.isFinite(dtCurPrice) && Number.isFinite(dtBp) && Math.abs(dtTarget - dtBp) > EPSILON) {
 					dtTargetPct = Math.round(((dtCurPrice - dtBp) / (dtTarget - dtBp)) * 100);
 				}
+				const dtStructureRange =
+					candles[a.idx]?.isoTime && candles[c.idx]?.isoTime
+						? { start: candles[a.idx].isoTime as string, end: candles[c.idx].isoTime as string }
+						: undefined;
+				const dtConfirmation = buildNecklineConfirmation(candles, breakoutIdx);
+				const dtPrecedingTrend = buildPrecedingTrend(candles, trend, a.idx);
 				push(patterns, {
 					type: 'double_top',
 					confidence,
 					range: { start, end },
+					...(dtStructureRange ? { structureRange: dtStructureRange } : {}),
+					...(dtConfirmation ? { confirmation: dtConfirmation } : {}),
+					...(dtPrecedingTrend ? { precedingTrend: dtPrecedingTrend } : {}),
 					pivots: [a, b, c],
 					neckline,
 					trendlineLabel: 'ネックライン',
@@ -789,10 +870,19 @@ export function detectDoubles(ctx: DetectContext): DetectResult {
 				if (Number.isFinite(dbCurPrice) && Number.isFinite(dbBp) && Math.abs(dbTarget - dbBp) > EPSILON) {
 					dbTargetPct = Math.round(((dbCurPrice - dbBp) / (dbTarget - dbBp)) * 100);
 				}
+				const dbStructureRange =
+					candles[a.idx]?.isoTime && candles[c.idx]?.isoTime
+						? { start: candles[a.idx].isoTime as string, end: candles[c.idx].isoTime as string }
+						: undefined;
+				const dbConfirmation = buildNecklineConfirmation(candles, breakoutIdx);
+				const dbPrecedingTrend = buildPrecedingTrend(candles, trend, a.idx);
 				push(patterns, {
 					type: 'double_bottom',
 					confidence,
 					range: { start, end },
+					...(dbStructureRange ? { structureRange: dbStructureRange } : {}),
+					...(dbConfirmation ? { confirmation: dbConfirmation } : {}),
+					...(dbPrecedingTrend ? { precedingTrend: dbPrecedingTrend } : {}),
 					pivots: [a, b, c],
 					neckline,
 					trendlineLabel: 'ネックライン',

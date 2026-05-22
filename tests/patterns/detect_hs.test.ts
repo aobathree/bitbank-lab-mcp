@@ -475,6 +475,82 @@ describe('detectHeadAndShoulders', () => {
 		expect(forming[0]?.breakoutTarget).toBeDefined();
 	});
 
+	// ── structureRange / confirmation / precedingTrend（誤読防止のための分離フィールド） ──
+
+	it('completed H&S: structureRange=左肩〜右肩, confirmation=not_confirmed, precedingTrend あり', () => {
+		const { candles, pivots } = buildHS();
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectHeadAndShoulders(ctx);
+
+		const hs = result.patterns.find((p) => p.type === 'head_and_shoulders');
+		expect(hs).toBeDefined();
+		if (!hs) return;
+
+		// 左肩(idx=0) → 右肩(idx=60)
+		expect(hs.structureRange?.start).toBe(candles[0].isoTime);
+		expect(hs.structureRange?.end).toBe(candles[60].isoTime);
+
+		// H&S 検出器はネックライン突破を確認しないため not_confirmed
+		expect(hs.confirmation?.type).toBe('not_confirmed');
+
+		expect(hs.precedingTrend).toBeDefined();
+		expect(hs.precedingTrend?.end).toBe(candles[0].isoTime);
+		expect(typeof hs.precedingTrend?.lookbackBars).toBe('number');
+	});
+
+	it('completed Inverse H&S: structureRange=左肩〜右肩, confirmation=not_confirmed, precedingTrend あり', () => {
+		const { candles, pivots } = buildInverseHS();
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectHeadAndShoulders(ctx);
+
+		const ihs = result.patterns.find((p) => p.type === 'inverse_head_and_shoulders');
+		expect(ihs).toBeDefined();
+		if (!ihs) return;
+
+		expect(ihs.structureRange?.start).toBe(candles[0].isoTime);
+		expect(ihs.structureRange?.end).toBe(candles[60].isoTime);
+		expect(ihs.confirmation?.type).toBe('not_confirmed');
+		expect(ihs.precedingTrend).toBeDefined();
+	});
+
+	it('forming H&S: structureRange / confirmation=not_confirmed / precedingTrend あり', () => {
+		const total = 66;
+		const candles: CandleData[] = Array.from({ length: total }, (_, i) => mkCandle(total - i, 90, 95, 85, 90));
+		candles[5] = mkCandle(total - 5, 99, 100, 97, 99);
+		candles[20] = mkCandle(total - 20, 87, 90, 87, 88);
+		candles[30] = mkCandle(total - 30, 134, 135, 132, 134);
+		candles[45] = mkCandle(total - 45, 89, 92, 89, 90);
+		for (let i = 60; i < total; i++) {
+			candles[i] = mkCandle(total - i, 101, 103, 100, 102);
+		}
+
+		const allPeaks: Pivot[] = [
+			{ idx: 5, price: 100, kind: 'H' },
+			{ idx: 30, price: 135, kind: 'H' },
+		];
+		const allValleys: Pivot[] = [
+			{ idx: 20, price: 88, kind: 'L' },
+			{ idx: 45, price: 90, kind: 'L' },
+		];
+
+		const ctx = buildCtx({
+			candles,
+			pivots: [...allPeaks, ...allValleys],
+			allPeaks,
+			allValleys,
+			includeForming: true,
+		});
+		const result = detectHeadAndShoulders(ctx);
+
+		const forming = result.patterns.find((p) => p.type === 'head_and_shoulders' && p.status === 'forming');
+		expect(forming).toBeDefined();
+		if (!forming) return;
+
+		expect(forming.structureRange).toBeDefined();
+		expect(forming.confirmation?.type).toBe('not_confirmed');
+		expect(forming.precedingTrend).toBeDefined();
+	});
+
 	// ── ピボット不足 ─────────────────────────────────────────
 
 	it('ピボット < 5 個では H&S/Inverse H&S とも検出しない', () => {

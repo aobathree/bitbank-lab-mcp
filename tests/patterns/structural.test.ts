@@ -403,4 +403,32 @@ describe('validatePriorTrend', () => {
 			expect(result.r2).toBeUndefined();
 		});
 	});
+
+	describe('priorStartIdx', () => {
+		function makeCandles(closes: number[]): Array<{ close: number }> {
+			return closes.map((close) => ({ close }));
+		}
+
+		it('priorStartIdx = max(0, startIdx - lookbackBars)', () => {
+			// startIdx=15, lookbackBars=10 → priorStartIdx=5
+			const closes = Array.from({ length: 16 }, () => 100);
+			const result = validatePriorTrend(makeCandles(closes), 15, 5, 'down_or_sideways');
+			expect(result.priorStartIdx).toBe(5);
+		});
+
+		it('insufficient_data でも priorStartIdx を返す（0 にクランプ）', () => {
+			// startIdx=5, lookbackBars=10 → priorStartIdx=0
+			const closes = Array.from({ length: 6 }, () => 100);
+			const result = validatePriorTrend(makeCandles(closes), 5, 5, 'down_or_sideways');
+			expect(result.classification).toBe('insufficient_data');
+			expect(result.priorStartIdx).toBe(0);
+		});
+
+		it('priorStartIdx = max(0, startIdx - 30) (max クランプ後)', () => {
+			// startIdx=40, patternBars=120 → lookbackBars=30, priorStartIdx=10
+			const closes = Array.from({ length: 41 }, () => 100);
+			const result = validatePriorTrend(makeCandles(closes), 40, 120, 'down_or_sideways');
+			expect(result.priorStartIdx).toBe(10);
+		});
+	});
 });

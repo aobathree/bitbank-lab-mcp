@@ -85,6 +85,8 @@ export interface PriorTrendResult {
 	ok: boolean;
 	priorReturn: number;
 	lookbackBars: number;
+	/** lookback window 先頭の candle index（= `max(0, startIdx - lookbackBars)`） */
+	priorStartIdx: number;
 	classification: PriorTrendClassification;
 	reason?: string;
 	rangePct?: number;
@@ -141,6 +143,7 @@ export function validatePriorTrend(
 			ok: true,
 			priorReturn,
 			lookbackBars,
+			priorStartIdx: priorStart,
 			classification: 'insufficient_data',
 			reason: 'startIdx < lookbackBars',
 		};
@@ -153,6 +156,7 @@ export function validatePriorTrend(
 			ok: okMissing,
 			priorReturn,
 			lookbackBars,
+			priorStartIdx: priorStart,
 			classification: 'sideways',
 			reason: 'missing_close',
 		};
@@ -164,6 +168,7 @@ export function validatePriorTrend(
 			ok: true,
 			priorReturn,
 			lookbackBars,
+			priorStartIdx: priorStart,
 			classification: 'sideways',
 		};
 	}
@@ -190,6 +195,7 @@ export function validatePriorTrend(
 			ok: true,
 			priorReturn,
 			lookbackBars,
+			priorStartIdx: priorStart,
 			classification: 'sideways',
 			reason: 'invalid_window',
 		};
@@ -215,5 +221,5 @@ export function validatePriorTrend(
 			? classification === 'up' || classification === 'sideways'
 			: classification === 'down' || classification === 'sideways';
 
-	return { ok, priorReturn, lookbackBars, classification, rangePct, efficiency, r2 };
+	return { ok, priorReturn, lookbackBars, priorStartIdx: priorStart, classification, rangePct, efficiency, r2 };
 }

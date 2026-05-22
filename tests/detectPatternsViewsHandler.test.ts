@@ -649,6 +649,108 @@ describe('formatPatternLine', () => {
 		const result = formatPatternLine(p, 0, 'summary', emptyMeta);
 		expect(result).toContain('サポートライン');
 	});
+
+	// ── 期間表示の分離（structureRange / confirmation / precedingTrend） ──
+
+	it('新フィールドが無いとき legacy「期間」行を表示する', () => {
+		const p = makePattern({ structureRange: undefined, confirmation: undefined, precedingTrend: undefined });
+		const result = formatPatternLine(p, 0, 'summary', emptyMeta);
+		expect(result).toContain('期間:');
+		expect(result).not.toContain('文脈期間');
+		expect(result).not.toContain('形成期間');
+	});
+
+	it('structureRange あり → 形成期間 行を出力する（日付のみ YYYY-MM-DD）', () => {
+		const p = makePattern({
+			structureRange: { start: '2025-09-01T00:00:00.000Z', end: '2025-09-26T00:00:00.000Z' },
+		});
+		const result = formatPatternLine(p, 0, 'summary', emptyMeta);
+		expect(result).toContain('形成期間: 2025-09-01 ~ 2025-09-26（構成点）');
+	});
+
+	it('confirmation=neckline_breakout → ブレイク確認 行に日付と価格を出力する', () => {
+		const p = makePattern({
+			structureRange: { start: '2025-09-01T00:00:00.000Z', end: '2025-09-26T00:00:00.000Z' },
+			confirmation: {
+				type: 'neckline_breakout',
+				date: '2025-10-02T00:00:00.000Z',
+				idx: 31,
+				price: 12345,
+			},
+		});
+		const result = formatPatternLine(p, 0, 'summary', emptyMeta);
+		expect(result).toContain('ブレイク確認: 2025-10-02');
+		expect(result).toContain('12,345円');
+		// 文脈期間: precedingTrend が無い場合は structureRange.start を起点に
+		expect(result).toContain('文脈期間: 2025-09-01 ~ 2025-10-02');
+	});
+
+	it('confirmation=not_confirmed → ブレイク確認: なし を表示する', () => {
+		const p = makePattern({
+			type: 'head_and_shoulders',
+			structureRange: { start: '2025-08-01T00:00:00.000Z', end: '2025-09-30T00:00:00.000Z' },
+			confirmation: { type: 'not_confirmed' },
+		});
+		const result = formatPatternLine(p, 0, 'summary', emptyMeta);
+		expect(result).toContain('ブレイク確認: なし');
+	});
+
+	it('precedingTrend → 先行トレンド 行に方向・%変化・lookback を出力する', () => {
+		const p = makePattern({
+			precedingTrend: {
+				start: '2025-08-22T00:00:00.000Z',
+				end: '2025-09-01T00:00:00.000Z',
+				direction: 'down',
+				returnPct: -7.5,
+				lookbackBars: 10,
+			},
+		});
+		const result = formatPatternLine(p, 0, 'summary', emptyMeta);
+		expect(result).toContain('先行トレンド: 2025-08-22 ~ 2025-09-01');
+		expect(result).toContain('下降');
+		expect(result).toContain('-7.5%');
+		expect(result).toContain('lookback=10本');
+	});
+
+	it('precedingTrend.direction=insufficient_data も表示できる', () => {
+		const p = makePattern({
+			precedingTrend: {
+				start: '2025-01-01T00:00:00.000Z',
+				end: '2025-01-05T00:00:00.000Z',
+				direction: 'insufficient_data',
+				returnPct: 0,
+				lookbackBars: 10,
+			},
+		});
+		const result = formatPatternLine(p, 0, 'summary', emptyMeta);
+		expect(result).toContain('データ不足');
+	});
+
+	it('新フィールド完備 → 期間: のみの単独行は出さない（誤読防止）', () => {
+		const p = makePattern({
+			structureRange: { start: '2025-09-01T00:00:00.000Z', end: '2025-09-26T00:00:00.000Z' },
+			confirmation: {
+				type: 'neckline_breakout',
+				date: '2025-10-02T00:00:00.000Z',
+				idx: 31,
+				price: 12345,
+			},
+			precedingTrend: {
+				start: '2025-08-22T00:00:00.000Z',
+				end: '2025-09-01T00:00:00.000Z',
+				direction: 'down',
+				returnPct: -7,
+				lookbackBars: 10,
+			},
+		});
+		const result = formatPatternLine(p, 0, 'summary', emptyMeta);
+		expect(result).toContain('文脈期間');
+		expect(result).toContain('形成期間');
+		expect(result).toContain('ブレイク確認');
+		expect(result).toContain('先行トレンド');
+		// legacy 「- 期間:」行が単独で出ないこと
+		expect(result).not.toMatch(/\n\s+- 期間: 2/);
+	});
 });
 
 // ── formatSummaryView ──

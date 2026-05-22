@@ -426,6 +426,116 @@ describe('detectDoubles', () => {
 		}
 	});
 
+	// ── structureRange / confirmation / precedingTrend（誤読防止のための分離フィールド） ──
+
+	it('completed double_top: structureRange=peak1〜peak2, confirmation=breakoutIdx, precedingTrend あり', () => {
+		const { candles, pivots } = buildDoubleTop();
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectDoubles(ctx);
+
+		const dt = result.patterns.find((p) => p.type === 'double_top');
+		expect(dt).toBeDefined();
+		if (!dt) return;
+
+		// structureRange: peak1(idx=0) → peak2(idx=20)
+		expect(dt.structureRange).toBeDefined();
+		expect(dt.structureRange?.start).toBe(candles[0].isoTime);
+		expect(dt.structureRange?.end).toBe(candles[20].isoTime);
+
+		// confirmation: ネックライン下抜け（idx=25 が最初の breakout）
+		expect(dt.confirmation).toBeDefined();
+		expect(dt.confirmation?.type).toBe('neckline_breakout');
+		if (dt.confirmation?.type === 'neckline_breakout') {
+			expect(dt.confirmation.idx).toBe(dt.breakoutBarIndex);
+			expect(dt.confirmation.date).toBe(candles[dt.breakoutBarIndex as number].isoTime);
+			expect(dt.confirmation.price).toBe(Number(candles[dt.breakoutBarIndex as number].close));
+		}
+
+		// precedingTrend: end は peak1（startIdx=0）の isoTime
+		expect(dt.precedingTrend).toBeDefined();
+		expect(dt.precedingTrend?.end).toBe(candles[0].isoTime);
+		expect(dt.precedingTrend?.direction).toBeDefined();
+		expect(typeof dt.precedingTrend?.returnPct).toBe('number');
+		expect(typeof dt.precedingTrend?.lookbackBars).toBe('number');
+	});
+
+	it('completed double_bottom: structureRange=valley1〜valley2, confirmation=breakoutIdx, precedingTrend あり', () => {
+		const { candles, pivots } = buildDoubleBottom();
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectDoubles(ctx);
+
+		const db = result.patterns.find((p) => p.type === 'double_bottom');
+		expect(db).toBeDefined();
+		if (!db) return;
+
+		expect(db.structureRange?.start).toBe(candles[0].isoTime);
+		expect(db.structureRange?.end).toBe(candles[20].isoTime);
+
+		expect(db.confirmation?.type).toBe('neckline_breakout');
+		if (db.confirmation?.type === 'neckline_breakout') {
+			expect(db.confirmation.idx).toBe(db.breakoutBarIndex);
+			expect(db.confirmation.date).toBe(candles[db.breakoutBarIndex as number].isoTime);
+		}
+
+		expect(db.precedingTrend).toBeDefined();
+		expect(db.precedingTrend?.end).toBe(candles[0].isoTime);
+	});
+
+	it('forming double_top: structureRange あり, confirmation=not_confirmed', () => {
+		const candles: CandleData[] = [];
+		for (let i = 0; i < 50; i++) candles.push(mkCandle(50 - i, 150, 155, 145, 150));
+		candles[15] = mkCandle(35, 195, 200, 190, 195);
+		candles[30] = mkCandle(20, 163, 168, 160, 165);
+		for (let i = 45; i < 50; i++) candles[i] = mkCandle(50 - i, 195, 198, 190, 196);
+
+		const allPeaks: Pivot[] = [{ idx: 15, price: 200, kind: 'H' }];
+		const allValleys: Pivot[] = [{ idx: 30, price: 160, kind: 'L' }];
+
+		const ctx = buildCtx({
+			candles,
+			pivots: [...allPeaks, ...allValleys],
+			allPeaks,
+			allValleys,
+			includeForming: true,
+		});
+		const result = detectDoubles(ctx);
+		const forming = result.patterns.find((p) => p.type === 'double_top' && p.status === 'forming');
+		expect(forming).toBeDefined();
+		if (!forming) return;
+
+		expect(forming.structureRange).toBeDefined();
+		expect(forming.confirmation?.type).toBe('not_confirmed');
+	});
+
+	it('forming double_bottom: structureRange は valley1〜valley2 で閉じる（lastIdx は含まない）', () => {
+		const candles: CandleData[] = [];
+		for (let i = 0; i < 50; i++) candles.push(mkCandle(50 - i, 130, 135, 125, 130));
+		candles[10] = mkCandle(40, 102, 105, 100, 102);
+		candles[20] = mkCandle(30, 128, 130, 125, 128);
+		candles[30] = mkCandle(20, 103, 105, 100, 103);
+		for (let i = 40; i < 50; i++) candles[i] = mkCandle(50 - i, 125, 128, 122, 126);
+
+		const pivots: Pivot[] = [
+			{ idx: 5, price: 135, kind: 'H' },
+			{ idx: 10, price: 100, kind: 'L' },
+			{ idx: 20, price: 130, kind: 'H' },
+			{ idx: 30, price: 100, kind: 'L' },
+			{ idx: 45, price: 128, kind: 'H' },
+		];
+		const allPeaks = pivots.filter((p) => p.kind === 'H');
+		const allValleys = pivots.filter((p) => p.kind === 'L');
+
+		const ctx = buildCtx({ candles, pivots, allPeaks, allValleys, includeForming: true });
+		const result = detectDoubles(ctx);
+		const forming = result.patterns.find((p) => p.type === 'double_bottom' && p.status === 'forming');
+		expect(forming).toBeDefined();
+		if (!forming) return;
+
+		expect(forming.structureRange?.start).toBe(candles[10].isoTime);
+		expect(forming.structureRange?.end).toBe(candles[30].isoTime);
+		expect(forming.confirmation?.type).toBe('not_confirmed');
+	});
+
 	// ── targetReachedPct ─────────────────────────────────
 
 	it('breakout 後に target 方向に動いた場合 targetReachedPct を算出', () => {

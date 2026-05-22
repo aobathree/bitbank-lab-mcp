@@ -249,10 +249,70 @@ function buildIdxToIso(meta: PatternMeta): Record<number, string> {
 	return map;
 }
 
+/** ISO 文字列を YYYY-MM-DD に切り詰める（不正値は元の文字列をそのまま返す） */
+function toDateOnly(iso?: string): string {
+	if (!iso) return 'n/a';
+	return iso.length >= 10 ? iso.slice(0, 10) : iso;
+}
+
+/**
+ * structureRange / confirmation / precedingTrend が揃っている場合に
+ * 文脈期間 / 形成期間 / ブレイク確認 / 先行トレンド の行を組み立てる。
+ * いずれも未設定の場合は legacy「期間」行をフォールバックとして返す。
+ */
+function buildPeriodLines(p: PatternEntry, legacyRange: string): string[] {
+	const hasNew = !!(p?.structureRange || p?.confirmation || p?.precedingTrend);
+	if (!hasNew) return [`   - 期間: ${legacyRange}`];
+
+	const lines: string[] = [];
+
+	const ctxStart = p.precedingTrend?.start ?? p.structureRange?.start ?? p.range?.start;
+	const confirmedDate = p.confirmation?.type === 'neckline_breakout' ? p.confirmation.date : undefined;
+	const ctxEnd = confirmedDate ?? p.structureRange?.end ?? p.range?.end;
+	if (ctxStart && ctxEnd) {
+		const suffix = confirmedDate
+			? '（先行トレンド〜ブレイク確認日）'
+			: p.precedingTrend
+				? '（先行トレンド〜構成終了）'
+				: '';
+		lines.push(`   - 文脈期間: ${toDateOnly(ctxStart)} ~ ${toDateOnly(ctxEnd)}${suffix}`);
+	}
+
+	if (p.structureRange) {
+		lines.push(`   - 形成期間: ${toDateOnly(p.structureRange.start)} ~ ${toDateOnly(p.structureRange.end)}（構成点）`);
+	}
+
+	if (p.confirmation?.type === 'neckline_breakout') {
+		const priceStr = Number.isFinite(p.confirmation.price)
+			? `${Math.round(p.confirmation.price).toLocaleString('ja-JP')}円`
+			: 'n/a';
+		lines.push(`   - ブレイク確認: ${toDateOnly(p.confirmation.date)}（${priceStr}）`);
+	} else if (p.confirmation?.type === 'not_confirmed') {
+		lines.push('   - ブレイク確認: なし（検出器ではネックライン突破を確認していません）');
+	}
+
+	if (p.precedingTrend) {
+		const dirJa: Record<string, string> = {
+			up: '上昇',
+			down: '下降',
+			sideways: '横ばい',
+			insufficient_data: 'データ不足',
+		};
+		const t = p.precedingTrend;
+		const sign = t.returnPct > 0 ? '+' : '';
+		lines.push(
+			`   - 先行トレンド: ${toDateOnly(t.start)} ~ ${toDateOnly(t.end)}（${dirJa[t.direction] || t.direction}、${sign}${t.returnPct}%、lookback=${t.lookbackBars}本）`,
+		);
+	}
+
+	return lines.length > 0 ? lines : [`   - 期間: ${legacyRange}`];
+}
+
 export function formatPatternLine(p: PatternEntry, idx: number, view: string, meta: PatternMeta): string {
 	const name = String(p?.type || 'unknown');
 	const conf = p?.confidence != null ? Number(p.confidence).toFixed(2) : 'n/a';
 	const range = p?.range ? `${p.range.start} ~ ${p.range.end}` : 'n/a';
+	const periodLines = buildPeriodLines(p, range);
 
 	// price range
 	let priceRange: string | null = null;
@@ -416,7 +476,7 @@ export function formatPatternLine(p: PatternEntry, idx: number, view: string, me
 
 	const lines = [
 		`${idx + 1}. ${name} (パターン整合度: ${conf})`,
-		`   - 期間: ${range}`,
+		...periodLines,
 		statusLine,
 		priceRange ? `   - 価格範囲: ${priceRange}` : null,
 		...(pivotLines.length ? pivotLines : []),

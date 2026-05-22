@@ -104,6 +104,71 @@ describe('DetectedPatternSchema', () => {
 			}),
 		).toThrow();
 	});
+
+	it('structureRange / confirmation(neckline_breakout) / precedingTrend を受け入れる', () => {
+		const result = DetectedPatternSchema.parse({
+			type: 'double_bottom',
+			confidence: 0.8,
+			range: { start: '2025-09-01', end: '2025-10-02' },
+			structureRange: { start: '2025-09-01', end: '2025-09-26' },
+			confirmation: {
+				type: 'neckline_breakout',
+				date: '2025-10-02',
+				idx: 31,
+				price: 1234567,
+			},
+			precedingTrend: {
+				start: '2025-08-22',
+				end: '2025-09-01',
+				direction: 'down',
+				returnPct: -7.5,
+				lookbackBars: 10,
+			},
+		});
+		expect(result.structureRange?.end).toBe('2025-09-26');
+		expect(result.confirmation?.type).toBe('neckline_breakout');
+		if (result.confirmation?.type === 'neckline_breakout') {
+			expect(result.confirmation.idx).toBe(31);
+		}
+		expect(result.precedingTrend?.direction).toBe('down');
+	});
+
+	it('confirmation=not_confirmed を受け入れる', () => {
+		const result = DetectedPatternSchema.parse({
+			type: 'head_and_shoulders',
+			confidence: 0.7,
+			range: { start: '2024-01-01', end: '2024-03-01' },
+			confirmation: { type: 'not_confirmed' },
+		});
+		expect(result.confirmation?.type).toBe('not_confirmed');
+	});
+
+	it('precedingTrend.direction=insufficient_data を受け入れる', () => {
+		const result = DetectedPatternSchema.parse({
+			type: 'double_top',
+			confidence: 0.6,
+			range: { start: '2024-01-01', end: '2024-01-30' },
+			precedingTrend: {
+				start: '2024-01-01',
+				end: '2024-01-05',
+				direction: 'insufficient_data',
+				returnPct: 0,
+				lookbackBars: 10,
+			},
+		});
+		expect(result.precedingTrend?.direction).toBe('insufficient_data');
+	});
+
+	it('confirmation.type が未知の値は拒否する', () => {
+		expect(() =>
+			DetectedPatternSchema.parse({
+				type: 'double_top',
+				confidence: 0.8,
+				range: { start: '2024-01-01', end: '2024-01-30' },
+				confirmation: { type: 'unknown_type' },
+			}),
+		).toThrow();
+	});
 });
 
 describe('CandlePatternTypeEnum', () => {

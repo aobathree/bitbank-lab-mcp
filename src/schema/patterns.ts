@@ -60,6 +60,48 @@ export const DetectedPatternSchema = z.object({
 	/** 人間可読な時間足ラベル（例: '日足', '4時間足', '週足'） */
 	timeframeLabel: z.string().optional(),
 	range: z.object({ start: z.string(), end: z.string() }),
+	/**
+	 * パターン構成点のみで張る期間（誤読防止のための追加フィールド）。
+	 * double_top: peak1 → peak2 / double_bottom: valley1 → valley2 /
+	 * H&S・inverse H&S: 左肩 → 右肩。range はブレイク確認日まで含むことがあるが
+	 * こちらは構成点だけで閉じる。
+	 */
+	structureRange: z.object({ start: z.string(), end: z.string() }).optional(),
+	/**
+	 * 検出器自身が確認したブレイク（ネックライン突破等）。
+	 * - double_top / double_bottom completed: type='neckline_breakout' を設定
+	 * - H&S / inverse H&S: 検出器はネックラインブレイクを確認しないため type='not_confirmed'
+	 * - forming パターン: type='not_confirmed'
+	 *
+	 * パターン検出後の事後分析（`aftermath.breakoutConfirmed`）とは別概念。
+	 */
+	confirmation: z
+		.union([
+			z.object({
+				type: z.literal('neckline_breakout'),
+				date: z.string(),
+				idx: z.number().int(),
+				price: z.number(),
+			}),
+			z.object({ type: z.literal('not_confirmed') }),
+		])
+		.optional(),
+	/**
+	 * 先行トレンド（パターン形成直前の lookback window のトレンド情報）。
+	 * - start: lookback window 先頭の isoTime
+	 * - end:   パターン構成開始点（startIdx）の isoTime
+	 * - direction: 'up' / 'down' / 'sideways' / 'insufficient_data'
+	 * - returnPct: priorReturn を百分率（小数2桁）に整形した値
+	 */
+	precedingTrend: z
+		.object({
+			start: z.string(),
+			end: z.string(),
+			direction: z.enum(['up', 'down', 'sideways', 'insufficient_data']),
+			returnPct: z.number(),
+			lookbackBars: z.number().int(),
+		})
+		.optional(),
 	pivots: z.array(z.object({ idx: z.number().int(), price: z.number() })).optional(),
 	neckline: z
 		.array(z.object({ x: z.number().int().optional(), y: z.number() }))

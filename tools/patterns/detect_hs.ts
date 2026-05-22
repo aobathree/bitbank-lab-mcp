@@ -9,10 +9,30 @@ import {
 	HS_NECKLINE_MAX_PCT,
 	HS_SHOULDER_MAX_PCT,
 	isSameLevel,
+	type PriorTrendResult,
 	validateHorizontalNeckline,
 	validatePriorTrend,
 } from './structural.js';
-import type { DeduplicablePattern, DetectContext, DetectResult } from './types.js';
+import type { CandleData, DeduplicablePattern, DetectContext, DetectResult, PatternPrecedingTrend } from './types.js';
+
+// ── Helper: PriorTrendResult → PatternPrecedingTrend ──
+
+function buildPrecedingTrend(
+	candles: CandleData[],
+	trend: PriorTrendResult,
+	startIdx: number,
+): PatternPrecedingTrend | undefined {
+	const startIso = candles[trend.priorStartIdx]?.isoTime;
+	const endIso = candles[startIdx]?.isoTime;
+	if (!startIso || !endIso) return undefined;
+	return {
+		start: startIso,
+		end: endIso,
+		direction: trend.classification,
+		returnPct: Number((trend.priorReturn * 100).toFixed(2)),
+		lookbackBars: trend.lookbackBars,
+	};
+}
 
 // ── 定数 ──
 
@@ -96,11 +116,15 @@ function findStrictInverseHS(ctx: DetectContext): { patterns: DeduplicablePatter
 				);
 				const ihsNlAvg = (p1.price + p3.price) / 2;
 				const ihsTarget = Math.round(ihsNlAvg + (ihsNlAvg - p2.price));
+				const ihsPrecedingTrend = buildPrecedingTrend(candles, trend, p0.idx);
 
 				patterns.push({
 					type: 'inverse_head_and_shoulders',
 					confidence,
 					range: { start, end },
+					structureRange: { start, end },
+					confirmation: { type: 'not_confirmed' },
+					...(ihsPrecedingTrend ? { precedingTrend: ihsPrecedingTrend } : {}),
 					pivots: [p0, p1, p2, p3, p4],
 					neckline,
 					trendlineLabel: 'ネックライン',
@@ -225,11 +249,15 @@ function findStrictHS(ctx: DetectContext): { patterns: DeduplicablePattern[]; fo
 				);
 				const hsNlAvg = (p1.price + p3.price) / 2;
 				const hsTarget = Math.round(hsNlAvg - (p2.price - hsNlAvg));
+				const hsPrecedingTrend = buildPrecedingTrend(candles, trend, p0.idx);
 
 				patterns.push({
 					type: 'head_and_shoulders',
 					confidence,
 					range: { start, end },
+					structureRange: { start, end },
+					confirmation: { type: 'not_confirmed' },
+					...(hsPrecedingTrend ? { precedingTrend: hsPrecedingTrend } : {}),
 					pivots: [p0, p1, p2, p3, p4],
 					neckline,
 					trendlineLabel: 'ネックライン',
@@ -381,6 +409,7 @@ function findRelaxedHS(ctx: DetectContext): DeduplicablePattern | null {
 				{ start, end },
 			);
 			const hsRelTarget = Math.round(nlY - (p2.price - nlY));
+			const hsRelPrecedingTrend = buildPrecedingTrend(candles, trend, p0.idx);
 			debugCandidates.push({
 				type: 'head_and_shoulders',
 				accepted: true,
@@ -391,6 +420,9 @@ function findRelaxedHS(ctx: DetectContext): DeduplicablePattern | null {
 				type: 'head_and_shoulders',
 				confidence,
 				range: { start, end },
+				structureRange: { start, end },
+				confirmation: { type: 'not_confirmed' },
+				...(hsRelPrecedingTrend ? { precedingTrend: hsRelPrecedingTrend } : {}),
 				pivots: [p0, p1, p2, p3, p4],
 				neckline,
 				trendlineLabel: 'ネックライン',
@@ -501,6 +533,7 @@ function findRelaxedInverseHS(ctx: DetectContext): DeduplicablePattern | null {
 				{ start, end },
 			);
 			const ihsRelTarget = Math.round(nlY + (nlY - p2.price));
+			const ihsRelPrecedingTrend = buildPrecedingTrend(candles, trend, p0.idx);
 			debugCandidates.push({
 				type: 'inverse_head_and_shoulders',
 				accepted: true,
@@ -511,6 +544,9 @@ function findRelaxedInverseHS(ctx: DetectContext): DeduplicablePattern | null {
 				type: 'inverse_head_and_shoulders',
 				confidence,
 				range: { start, end },
+				structureRange: { start, end },
+				confirmation: { type: 'not_confirmed' },
+				...(ihsRelPrecedingTrend ? { precedingTrend: ihsRelPrecedingTrend } : {}),
 				pivots: [p0, p1, p2, p3, p4],
 				neckline,
 				trendlineLabel: 'ネックライン',
@@ -623,11 +659,16 @@ function tryFormingHS(ctx: DetectContext): DeduplicablePattern | null {
 
 	const formHsNl = neckline[0].y;
 	const formHsTarget = Math.round(formHsNl - (head.price - formHsNl));
+	const formHsStructureRange = start && end ? { start, end } : undefined;
+	const formHsPrecedingTrend = buildPrecedingTrend(candles, trend, left.idx);
 
 	return {
 		type: 'head_and_shoulders',
 		confidence,
 		range: { start, end },
+		...(formHsStructureRange ? { structureRange: formHsStructureRange } : {}),
+		confirmation: { type: 'not_confirmed' },
+		...(formHsPrecedingTrend ? { precedingTrend: formHsPrecedingTrend } : {}),
 		status: 'forming',
 		pivots: [
 			{ idx: left.idx, price: left.price, kind: 'H' as const },
@@ -743,11 +784,16 @@ function tryFormingInverseHS(ctx: DetectContext): DeduplicablePattern | null {
 
 	const formIhsNl = neckline[0].y;
 	const formIhsTarget = Math.round(formIhsNl + (formIhsNl - head.price));
+	const formIhsStructureRange = start && end ? { start, end } : undefined;
+	const formIhsPrecedingTrend = buildPrecedingTrend(candles, trend, left.idx);
 
 	return {
 		type: 'inverse_head_and_shoulders',
 		confidence,
 		range: { start, end },
+		...(formIhsStructureRange ? { structureRange: formIhsStructureRange } : {}),
+		confirmation: { type: 'not_confirmed' },
+		...(formIhsPrecedingTrend ? { precedingTrend: formIhsPrecedingTrend } : {}),
 		status: 'forming',
 		pivots: [
 			{ idx: left.idx, price: left.price, kind: 'L' as const },

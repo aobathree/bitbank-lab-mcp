@@ -148,6 +148,26 @@ export interface AftermathResult {
 	daysToTarget?: number | null;
 }
 
+/** パターン構成点のみで張る期間（誤読防止のための追加フィールド）。詳細は schema 参照。 */
+export interface PatternStructureRange {
+	start: string;
+	end: string;
+}
+
+/** 検出器自身が確認したブレイク情報。schema 参照。 */
+export type PatternConfirmation =
+	| { type: 'neckline_breakout'; date: string; idx: number; price: number }
+	| { type: 'not_confirmed' };
+
+/** 先行トレンド情報。schema 参照。 */
+export interface PatternPrecedingTrend {
+	start: string;
+	end: string;
+	direction: 'up' | 'down' | 'sideways' | 'insufficient_data';
+	returnPct: number;
+	lookbackBars: number;
+}
+
 /** パターンエントリ（検出結果の1件）— 共通フィールド＋任意拡張 */
 export interface PatternEntry extends DeduplicablePattern {
 	confidence?: number;
@@ -157,6 +177,9 @@ export interface PatternEntry extends DeduplicablePattern {
 	structureDiagram?: { svg: string; artifact?: { identifier: string; title: string } };
 	status?: string;
 	breakout?: { idx: number; price: number; direction?: string } | null;
+	structureRange?: PatternStructureRange;
+	confirmation?: PatternConfirmation;
+	precedingTrend?: PatternPrecedingTrend;
 	breakoutDirection?: 'up' | 'down';
 	outcome?: 'success' | 'failure' | string;
 	breakoutTarget?: number;
