@@ -126,7 +126,7 @@ describe('detectPennantsFlags — scanStart 修正の境界テスト（PR3）', 
 		expect(withBreakout.length).toBeGreaterThan(0);
 		for (const p of withBreakout) {
 			// 保ち合いの最終スイング（i=13 or 14）以降にブレイクが検出されること
-			expect(p.breakoutBarIndex!).toBeGreaterThanOrEqual(14);
+			expect(p.breakoutBarIndex as number).toBeGreaterThanOrEqual(14);
 		}
 	});
 

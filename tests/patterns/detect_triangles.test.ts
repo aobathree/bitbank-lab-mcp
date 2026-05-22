@@ -358,11 +358,12 @@ describe('detectTriangles — whipsaw boundary tests', () => {
 
 		expect(completed.length).toBeGreaterThan(0);
 		for (const p of completed) {
-			expect(p.breakoutBarIndex).toBeDefined();
+			const idx = p.breakoutBarIndex;
+			expect(idx).toBeDefined();
 			// 形成期間中の false breakout (i=20) が採用されていないこと
-			expect(p.breakoutBarIndex).not.toBe(20);
+			expect(idx).not.toBe(20);
 			// 保ち合い終端後（>=38）のブレイク位置であること
-			expect(p.breakoutBarIndex!).toBeGreaterThanOrEqual(38);
+			expect(idx as number).toBeGreaterThanOrEqual(38);
 		}
 	});
 
