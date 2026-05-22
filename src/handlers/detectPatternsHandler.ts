@@ -39,7 +39,7 @@ function prependWarningToResponse(
 export const toolDef: ToolDefinition = {
 	name: 'detect_patterns',
 	description:
-		'[Chart Patterns / Double Top / Head and Shoulders / Triangle] チャートパターン検出（chart patterns / double top / double bottom / head and shoulders / triangle / wedge / flag）。形成中+完成済みを統合検出。\n\n視覚確認: 結果の overlays を render_chart_svg に渡して描画可能。\n描画結果は必ずビジュアルとしてレンダリングして表示すること。\nチャット本文へのSVGコード直接出力は禁止。',
+		'[Chart Patterns / Double Top / Head and Shoulders / Triangle] チャートパターン検出（chart patterns / double top / double bottom / head and shoulders / triangle / wedge / flag）。形成中+完成済みを統合検出。表示日時は tz（既定 Asia/Tokyo）で整形。\n\n視覚確認: 結果の overlays を render_chart_svg に渡して描画可能。\n描画結果は必ずビジュアルとしてレンダリングして表示すること。\nチャット本文へのSVGコード直接出力は禁止。\n\n構造化データ (data.patterns[*].range.start/end 等) は後方互換のため UTC ISO 文字列のまま。',
 	inputSchema: DetectPatternsInputSchema,
 	handler: async ({
 		pair,

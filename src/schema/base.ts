@@ -77,12 +77,16 @@ export const CandleSchema = z.object({
 	low: z.number(),
 	close: z.number(),
 	volume: z.number().optional(),
-	isoTime: z.string().nullable().optional(),
+	isoTime: z
+		.string()
+		.nullable()
+		.optional()
+		.describe('UTC ISO 文字列（例: 2026-02-20T00:00:00.000Z）。tz 引数の影響を受けない。'),
 	isoTimeLocal: z
 		.string()
 		.nullable()
 		.optional()
-		.describe('tz パラメータ指定時のローカル時刻（例: 2026-02-20T09:00:00）'),
+		.describe('tz 引数のローカル時刻文字列（既定 Asia/Tokyo、例: 2026-02-20T09:00:00）。'),
 	time: z.union([z.string(), z.number()]).optional(),
 	timestamp: z.number().optional(),
 });

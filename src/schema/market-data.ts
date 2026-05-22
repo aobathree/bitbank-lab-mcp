@@ -223,7 +223,7 @@ export const GetCandlesInputSchema = z.object({
 				'- 1min/5min/15min/30min/1hour → YYYYMMDD（例: 20251022）\n' +
 				'- 4hour/8hour/12hour/1day/1week/1month → YYYY（例: 2025）\n' +
 				'date=YYYYMMDD は tz（既定 Asia/Tokyo）の暦日として解釈します。指定日の終端（23:59:59.999 in tz）以前の limit 本を返します。' +
-				'limit は日数ではなくローソク足本数です（例: 1hour, date=20251002, limit=24 は指定 tz の 10/2 24 本）。\n' +
+				'limit は日数ではなくローソク足本数です。例: 1hour, date=20251002, limit=24 は指定 tz の 10/2 24 本（00:00〜23:00）。\n' +
 				'省略時は最新。\n' +
 				'（互換: 年足系で YYYYMMDD を渡した場合は先頭4桁を年として使用）',
 		),
@@ -243,9 +243,8 @@ export const GetCandlesInputSchema = z.object({
 		.optional()
 		.default('Asia/Tokyo')
 		.describe(
-			'タイムゾーン（デフォルト: Asia/Tokyo）。以下 2 つの用途を兼ねる:\n' +
-				'1. date フィルタ起点 — date=YYYYMMDD はこの tz の暦日として解釈され、その終端以前の足だけ返す（PR-3）。\n' +
-				'2. 表示 — 各ローソク足の isoTimeLocal、keyPoints.date / priceRange.periodStart/End にこの tz の暦日を出力。\n' +
+			'タイムゾーン（既定 Asia/Tokyo）。date パラメータの暦日解釈、isoTimeLocal、keyPoints.date、' +
+				'priceRange.periodStart/End の表示に使用。isoTime は常に UTC ISO。' +
 				'空文字も Asia/Tokyo にフォールバック。UTC が必要な場合は明示的に "UTC" を渡す。',
 		),
 });

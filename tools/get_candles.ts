@@ -714,8 +714,8 @@ export default async function getCandles(
 // ── MCP ツール定義（tool-registry から自動収集） ──
 export const toolDef: ToolDefinition = {
 	name: 'get_candles',
-	description: `[Candles / OHLCV / Candlestick] ローソク足（candles / OHLCV / chart data）を取得。1min〜1monthの各時間足に対応。
-date は tz（既定 Asia/Tokyo）の暦日として解釈し、その終端以前の limit 本を返す。
+	description: `[Candles / OHLCV / Candlestick] ローソク足（candles / OHLCV / chart data）を取得。1min〜1monthの各時間足に対応。date は tz（既定 Asia/Tokyo）の暦日として解釈し、その終端以前の limit 本を返す。
+詳細は inputSchema を参照。
 
 【重要】バックテストには run_backtest を使用（データ取得〜チャート描画を一括実行）。`,
 	inputSchema: GetCandlesInputSchema,

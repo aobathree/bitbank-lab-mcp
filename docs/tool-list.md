@@ -8,7 +8,7 @@
 |------|-------------|
 | `get_ticker` | 単一ペアのティッカー（ticker / price / 24h change）を取得。現在価格・出来高・24h高安。 |
 | `get_orderbook` | 板情報（order book / depth / bid-ask spread）の統合ツール。 |
-| `get_candles` | ローソク足（candles / OHLCV / chart data）を取得。1min〜1monthの各時間足に対応。 |
+| `get_candles` | ローソク足（candles / OHLCV / chart data）を取得。1min〜1monthの各時間足に対応。date は tz（既定 Asia/Tokyo）の暦日として解釈し、その終端以前の limit 本を返す。 |
 | `get_transactions` | 市場の約定履歴（transactions / recent trades）を取得。直近60件 or 日付指定。金額・価格でフィルタ可能。 |
 | `get_flow_metrics` | 資金フロー分析（flow / CVD / aggressor ratio / buy-sell pressure）。約定データからCVD・アグレッサー比・スパイクを検出。hours（推奨）で時間範囲指定、または limit で件数指定。 |
 | `get_volatility_metrics` | ボラティリティ指標（volatility / ATR / realized vol）を算出。RV・ATR・Parkinson・Garman-Klass・Rogers-Satchell。年率換算対応。 |
@@ -37,7 +37,7 @@
 | Tool | Description |
 |------|-------------|
 | `analyze_market_signal` | 市場の総合シグナル（market signal / composite score / bull-bear / triage）。5要素（板圧力・CVD・モメンタム・ボラティリティ・SMAトレンド）を-100〜+100の単一スコアで瞬時評価。分析の起点・スクリーニングに最適。 |
-| `detect_patterns` | チャートパターン検出（chart patterns / double top / double bottom / head and shoulders / triangle / wedge / flag）。形成中+完成済みを統合検出。 |
+| `detect_patterns` | チャートパターン検出（chart patterns / double top / double bottom / head and shoulders / triangle / wedge / flag）。形成中+完成済みを統合検出。表示日時は tz（既定 Asia/Tokyo）で整形。 |
 | `detect_macd_cross` | MACDクロス検出（MACD cross / crossover / golden cross / dead cross / screening）。 |
 | `detect_whale_events` | 大口投資家の動向検出（whale / large orders / big players / smart money）。板×ローソク足で大口注文を簡易検出。推測ベース。 |
 
