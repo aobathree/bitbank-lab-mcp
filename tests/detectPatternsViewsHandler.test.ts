@@ -751,6 +751,39 @@ describe('formatPatternLine', () => {
 		// legacy 「- 期間:」行が単独で出ないこと
 		expect(result).not.toMatch(/\n\s+- 期間: 2/);
 	});
+
+	// ── 低 confidence の警告表示（形状不十分扱い） ──
+
+	it('confidence < 0.6 → 「形状不十分」「低信頼」などの警告ラベルを表示する', () => {
+		const p = makePattern({ confidence: 0.45 });
+		const result = formatPatternLine(p, 0, 'detailed', emptyMeta);
+		expect(result).toMatch(/形状不十分|低信頼|信頼度: 低/);
+	});
+
+	it('confidence = 0.01 は強いシグナル扱いされず警告ラベルが付く（非常に低い）', () => {
+		const p = makePattern({ type: 'inverse_head_and_shoulders', confidence: 0.01 });
+		const result = formatPatternLine(p, 0, 'detailed', emptyMeta);
+		expect(result).toMatch(/非常に低い|除外候補/);
+		expect(result).not.toMatch(/参考材料/);
+	});
+
+	it('confidence >= 0.6 → 低信頼警告は付かない', () => {
+		const p = makePattern({ confidence: 0.75 });
+		const result = formatPatternLine(p, 0, 'detailed', emptyMeta);
+		expect(result).not.toMatch(/形状不十分|信頼度: 低|信頼度: 非常に低い/);
+	});
+
+	it('confidence < 0.3 は除外候補レベルの強い警告を出す', () => {
+		const p = makePattern({ confidence: 0.2 });
+		const result = formatPatternLine(p, 0, 'detailed', emptyMeta);
+		expect(result).toMatch(/非常に低い|除外候補/);
+	});
+
+	it('confidence < 0.6 の警告は full view でも出る', () => {
+		const p = makePattern({ confidence: 0.4 });
+		const result = formatPatternLine(p, 0, 'full', emptyMeta);
+		expect(result).toMatch(/形状不十分|低信頼|信頼度: 低/);
+	});
 });
 
 // ── formatSummaryView ──

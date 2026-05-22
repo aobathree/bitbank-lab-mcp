@@ -340,6 +340,17 @@ export function formatPatternLine(
 	const range = p?.range ? `${toDateOnly(p.range.start, tz)} ~ ${toDateOnly(p.range.end, tz)}` : 'n/a';
 	const periodLines = buildPeriodLines(p, range, tz);
 
+	// 低 confidence の警告ラベル。confidence < 0.6 は形状不十分、< 0.3 は除外候補レベル。
+	// 「重要」「強いシグナル」「参考材料」扱いを防ぐため明示的に警告する。
+	const confNum = Number(p?.confidence ?? NaN);
+	let lowConfWarning: string | null = null;
+	if (Number.isFinite(confNum) && confNum < 0.6) {
+		lowConfWarning =
+			confNum < 0.3
+				? '   - ⚠️ 信頼度: 非常に低い（形状不十分・除外候補レベル、単独判断不可）'
+				: '   - ⚠️ 信頼度: 低い（形状不十分・単独判断不可、他指標と必ず併用）';
+	}
+
 	// price range
 	let priceRange: string | null = null;
 	if (Array.isArray(p?.pivots) && p.pivots.length) {
@@ -503,6 +514,7 @@ export function formatPatternLine(
 
 	const lines = [
 		`${idx + 1}. ${name} (パターン整合度: ${conf})`,
+		lowConfWarning,
 		...periodLines,
 		statusLine,
 		priceRange ? `   - 価格範囲: ${priceRange}` : null,

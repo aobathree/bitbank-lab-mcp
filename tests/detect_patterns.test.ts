@@ -486,4 +486,116 @@ describe('detect_patterns handler', () => {
 		expect(text).toContain('2026-10-02');
 		expect(text).toContain('2026-10-11');
 	});
+
+	// ── パターン表示順序の一貫性（低 confidence H&S が上に出ない） ──
+
+	it('高 confidence パターンが低 confidence H&S より上に表示される（detectPatterns が返した順を handler が崩さない）', async () => {
+		// detectPatterns は rankPatterns 適用後の順番で返すため、
+		// ここでは「ソート済み」配列を mock として渡し、handler がそれを保つことを検証する。
+		// （rankPatterns 単体の挙動は tests/patterns/ranking.test.ts で検証）
+		const sortedPatterns = [
+			{
+				type: 'triangle_symmetrical',
+				confidence: 0.82,
+				timeframe: '1day',
+				timeframeLabel: '日足',
+				range: { start: '2026-03-01T00:00:00.000Z', end: '2026-03-20T00:00:00.000Z' },
+				status: 'completed',
+			},
+			{
+				type: 'inverse_head_and_shoulders',
+				confidence: 0.01,
+				timeframe: '1day',
+				timeframeLabel: '日足',
+				range: { start: '2026-02-01T00:00:00.000Z', end: '2026-02-25T00:00:00.000Z' },
+				status: 'forming',
+			},
+		];
+
+		mockedDetectPatterns.mockResolvedValueOnce(
+			asMockResult(
+				okResult({
+					data: {
+						patterns: sortedPatterns,
+						overlays: {
+							ranges: sortedPatterns.map((p) => ({ start: p.range.start, end: p.range.end, label: p.type })),
+						},
+						warnings: [],
+						statistics: {},
+					},
+					meta: {
+						pair: 'btc_jpy',
+						type: '1day',
+						count: 2,
+						visualization_hints: { preferred_style: 'line', highlight_patterns: [] },
+						debug: { swings: [], candidates: [] },
+					},
+				}),
+			),
+		);
+
+		const res = await toolDef.handler({
+			pair: 'btc_jpy',
+			type: '1day',
+			limit: 90,
+			view: 'detailed',
+			includeForming: true,
+		});
+
+		const text = (res as { content: Array<{ text: string }> }).content[0].text;
+		const idxHigh = text.indexOf('triangle_symmetrical');
+		const idxLow = text.indexOf('inverse_head_and_shoulders');
+		expect(idxHigh).toBeGreaterThanOrEqual(0);
+		expect(idxLow).toBeGreaterThanOrEqual(0);
+		expect(idxHigh).toBeLessThan(idxLow);
+
+		// structuredContent.data.patterns の順序も同じ
+		// biome-ignore lint/suspicious/noExplicitAny: test assertion for structuredContent
+		const sc = (res as any).structuredContent;
+		const patTypes: string[] = (sc?.data?.patterns ?? []).map((p: { type: string }) => p.type);
+		expect(patTypes[0]).toBe('triangle_symmetrical');
+		expect(patTypes[1]).toBe('inverse_head_and_shoulders');
+	});
+
+	it('低 confidence H&S は detailed view に「形状不十分 / 低信頼」相当の警告を含む', async () => {
+		mockedDetectPatterns.mockResolvedValueOnce(
+			asMockResult(
+				okResult({
+					data: {
+						patterns: [
+							{
+								type: 'inverse_head_and_shoulders',
+								confidence: 0.01,
+								timeframe: '1day',
+								timeframeLabel: '日足',
+								range: { start: '2026-02-01T00:00:00.000Z', end: '2026-02-25T00:00:00.000Z' },
+								status: 'forming',
+							},
+						],
+						overlays: { ranges: [] },
+						warnings: [],
+						statistics: {},
+					},
+					meta: {
+						pair: 'btc_jpy',
+						type: '1day',
+						count: 1,
+						visualization_hints: { preferred_style: 'line', highlight_patterns: [] },
+						debug: { swings: [], candidates: [] },
+					},
+				}),
+			),
+		);
+
+		const res = await toolDef.handler({
+			pair: 'btc_jpy',
+			type: '1day',
+			limit: 90,
+			view: 'detailed',
+			includeForming: true,
+		});
+
+		const text = (res as { content: Array<{ text: string }> }).content[0].text;
+		expect(text).toMatch(/非常に低い|除外候補/);
+	});
 });

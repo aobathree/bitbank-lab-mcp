@@ -1,6 +1,11 @@
 /**
  * Head & Shoulders / Inverse Head & Shoulders 検出（完成済み＋形成中）
  * detect_patterns.ts Section 3 から抽出
+ *
+ * TODO（別 PR 候補）: H&S 系も detect_triples / detect_doubles と同様に
+ * neckline_breakout を確認して confirmation = 'neckline_breakout' を立て、
+ * status を completed / near_completion / forming に振り分ける。現状は
+ * 完成済み構造でも confirmation: 'not_confirmed' のまま返している。
  */
 import { generatePatternDiagram } from '../../lib/pattern-diagrams.js';
 import { finalizeConf, periodScoreDays } from './helpers.js';
@@ -45,6 +50,8 @@ const FORMING_RIGHT_TOLERANCE_PCT = 0.08;
 const FORMING_MAX_DAYS = 90;
 const FORMING_MIN_DAYS = 21;
 const FORMING_MIN_COMPLETION = 0.4;
+// detect_triples.ts と同値。形状不十分な forming 候補を上位表示させないための最低 confidence。
+const FORMING_MIN_CONFIDENCE = 0.5;
 
 // ── Helper: Strict Inverse H&S (L-H-L-H-L) ──
 
@@ -654,6 +661,20 @@ function tryFormingHS(ctx: DetectContext): DeduplicablePattern | null {
 
 	const confBase = Math.min(1, Math.max(0, 0.6 * closeness + 0.4 * progress));
 	const confidence = Math.round(confBase * (isProvisional ? 0.9 : 1.0) * 100) / 100;
+
+	// 形状不十分な forming 候補（confidence=0.01 等）が上位表示されるのを防ぐ。
+	// detect_triples.ts と同じ閾値を使う。
+	if (confidence < FORMING_MIN_CONFIDENCE) {
+		ctx.debugCandidates.push({
+			type: 'head_and_shoulders',
+			accepted: false,
+			reason: 'confidence_below_min_forming',
+			indices: [left.idx, head.idx, postHeadValley.idx, rightShoulder.idx],
+			details: { confidence, threshold: FORMING_MIN_CONFIDENCE },
+		});
+		return null;
+	}
+
 	const start = isoAt(left.idx);
 	const end = isoAt(rightShoulder.idx);
 
@@ -779,6 +800,18 @@ function tryFormingInverseHS(ctx: DetectContext): DeduplicablePattern | null {
 
 	const confBase = Math.min(1, Math.max(0, 0.6 * closeness + 0.4 * progress));
 	const confidence = Math.round(confBase * (isProvisional ? 0.9 : 1.0) * 100) / 100;
+
+	if (confidence < FORMING_MIN_CONFIDENCE) {
+		ctx.debugCandidates.push({
+			type: 'inverse_head_and_shoulders',
+			accepted: false,
+			reason: 'confidence_below_min_forming',
+			indices: [left.idx, head.idx, postHeadPeak.idx, rightShoulder.idx],
+			details: { confidence, threshold: FORMING_MIN_CONFIDENCE },
+		});
+		return null;
+	}
+
 	const start = isoAt(left.idx);
 	const end = isoAt(rightShoulder.idx);
 

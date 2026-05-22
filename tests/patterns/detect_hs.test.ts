@@ -551,6 +551,94 @@ describe('detectHeadAndShoulders', () => {
 		expect(forming.precedingTrend).toBeDefined();
 	});
 
+	// ── 形成中の最低 confidence ゲート（FORMING_MIN_CONFIDENCE = 0.5） ─────
+
+	it('forming inverse H&S: 右肩が左肩から遠く confidence < 0.5 → 結果に含まれない & reject 理由が残る', () => {
+		// closeness = 1 - |107 - 100| / (100 * 0.08) = 1 - 7/8 = 0.125
+		// confBase = 0.6 * 0.125 + 0.4 * 0.125 = 0.125
+		// confidence = round(0.125 * 0.9 * 100)/100 = 0.11  → < 0.5
+		// completion = (0.75 + 0.25 * 0.125) * 0.9 = 0.703 → >= 0.4（残るのは confidence 側のみ）
+		const total = 66;
+		const candles: CandleData[] = Array.from({ length: total }, (_, i) => mkCandle(total - i, 90, 95, 85, 90));
+		candles[5] = mkCandle(total - 5, 100, 102, 99, 100);
+		candles[20] = mkCandle(total - 20, 111, 112, 110, 111);
+		candles[30] = mkCandle(total - 30, 60, 62, 59, 60);
+		candles[45] = mkCandle(total - 45, 109, 110, 108, 110);
+		// 現在価格を 107 (左肩 100 から 7%) にして closeness を下げる
+		for (let i = 60; i < total; i++) {
+			candles[i] = mkCandle(total - i, 106, 108, 106, 107);
+		}
+
+		const allPeaks: Pivot[] = [
+			{ idx: 20, price: 112, kind: 'H' },
+			{ idx: 45, price: 110, kind: 'H' },
+		];
+		const allValleys: Pivot[] = [
+			{ idx: 5, price: 100, kind: 'L' },
+			{ idx: 30, price: 60, kind: 'L' },
+		];
+
+		const ctx = buildCtx({
+			candles,
+			pivots: [...allPeaks, ...allValleys],
+			allPeaks,
+			allValleys,
+			includeForming: true,
+		});
+		const result = detectHeadAndShoulders(ctx);
+
+		const forming = result.patterns.filter((p) => p.type === 'inverse_head_and_shoulders' && p.status === 'forming');
+		expect(forming).toHaveLength(0);
+
+		const rejected = ctx.debugCandidates.find(
+			(d) =>
+				d.type === 'inverse_head_and_shoulders' && d.accepted === false && d.reason === 'confidence_below_min_forming',
+		);
+		expect(rejected).toBeDefined();
+		const details = rejected?.details as Record<string, unknown> | undefined;
+		expect(Number(details?.threshold)).toBe(0.5);
+		expect(Number(details?.confidence)).toBeLessThan(0.5);
+	});
+
+	it('forming H&S: 右肩が左肩から遠く confidence < 0.5 → 結果に含まれない & reject 理由が残る', () => {
+		const total = 66;
+		const candles: CandleData[] = Array.from({ length: total }, (_, i) => mkCandle(total - i, 90, 95, 85, 90));
+		candles[5] = mkCandle(total - 5, 99, 100, 97, 100);
+		candles[20] = mkCandle(total - 20, 87, 90, 87, 88);
+		candles[30] = mkCandle(total - 30, 134, 135, 132, 135);
+		candles[45] = mkCandle(total - 45, 89, 92, 89, 90);
+		// 現在価格を 93 (左肩 100 から 7%) にして closeness を下げる
+		for (let i = 60; i < total; i++) {
+			candles[i] = mkCandle(total - i, 93, 95, 91, 93);
+		}
+
+		const allPeaks: Pivot[] = [
+			{ idx: 5, price: 100, kind: 'H' },
+			{ idx: 30, price: 135, kind: 'H' },
+		];
+		const allValleys: Pivot[] = [
+			{ idx: 20, price: 88, kind: 'L' },
+			{ idx: 45, price: 90, kind: 'L' },
+		];
+
+		const ctx = buildCtx({
+			candles,
+			pivots: [...allPeaks, ...allValleys],
+			allPeaks,
+			allValleys,
+			includeForming: true,
+		});
+		const result = detectHeadAndShoulders(ctx);
+
+		const forming = result.patterns.filter((p) => p.type === 'head_and_shoulders' && p.status === 'forming');
+		expect(forming).toHaveLength(0);
+
+		const rejected = ctx.debugCandidates.find(
+			(d) => d.type === 'head_and_shoulders' && d.accepted === false && d.reason === 'confidence_below_min_forming',
+		);
+		expect(rejected).toBeDefined();
+	});
+
 	// ── ピボット不足 ─────────────────────────────────────────
 
 	it('ピボット < 5 個では H&S/Inverse H&S とも検出しない', () => {

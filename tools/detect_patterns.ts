@@ -14,6 +14,7 @@ import { detectTriangles } from './patterns/detect_triangles.js';
 import { detectTriples } from './patterns/detect_triples.js';
 import { detectWedges } from './patterns/detect_wedges.js';
 import { globalDedup } from './patterns/helpers.js';
+import { rankPatterns } from './patterns/ranking.js';
 import { linearRegressionWithR2, near as nearFn, pct as pctFn } from './patterns/regression.js';
 import { type Candle, detectSwingPoints, filterPeaks, filterValleys } from './patterns/swing.js';
 import type { CandDebugEntry, DeduplicablePattern, DetectContext } from './patterns/types.js';
@@ -239,6 +240,11 @@ export default async function detectPatterns(
 			p.timeframeLabel = tfLabel;
 		}
 
+		// 表示・返却前に優先度順にソートする（completed → confirmed → confidence → 直近性）。
+		// content と structuredContent.data.patterns / overlays が同じ並び順を共有することで
+		// 低 confidence の H&S 等が上位表示される問題を防ぐ。
+		patterns = rankPatterns(patterns);
+
 		// --- ここから先は SummaryPattern として扱う（検出モジュールが付与した固有フィールドにアクセスするため） ---
 		const summaryPatterns = patterns as SummaryPattern[];
 
@@ -276,6 +282,17 @@ export default async function detectPatterns(
 				const startDate = formatDateInTz(startMs, tz) ?? '?';
 				const endDate = formatDateInTz(endMs, tz) ?? '?';
 				let detail = `${idx + 1}. ${p.type}【${tfLabel}】(パターン整合度: ${p.confidence})\n   - 時間足: ${tfLabel}（${type}）\n   - 期間: ${startDate} ~ ${endDate}`;
+
+				// 低 confidence の警告ラベル（confidence < 0.6 は形状不十分、< 0.3 は除外候補レベル）。
+				// 「重要」「強いシグナル」「参考材料」扱いを防ぐため、明示的に警告する。
+				const confNum = Number(p.confidence ?? NaN);
+				if (Number.isFinite(confNum) && confNum < 0.6) {
+					if (confNum < 0.3) {
+						detail += '\n   - ⚠️ 信頼度: 非常に低い（形状不十分・除外候補レベル、単独判断不可）';
+					} else {
+						detail += '\n   - ⚠️ 信頼度: 低い（形状不十分・単独判断不可、他指標と必ず併用）';
+					}
+				}
 
 				// status（全パターン共通）
 				if (p.status) {
