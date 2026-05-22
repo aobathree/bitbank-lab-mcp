@@ -14,6 +14,7 @@
 import { EPSILON } from '../../lib/math.js';
 import { generatePatternDiagram, type PatternDiagramData } from '../../lib/pattern-diagrams.js';
 import {
+	barsPerDay,
 	calcAlternationScoreEx,
 	calcApex,
 	calcATR,
@@ -46,10 +47,7 @@ const SG_WINDOW_MAX = 11;
 const SG_CANDLE_RATIO = 20;
 const MIN_SG_PIVOTS = 6;
 
-// Wedge Detection params
-const WINDOW_SIZE_MIN = 25;
-const WINDOW_SIZE_MAX = 90;
-const WINDOW_STEP = 5;
+// Wedge Detection params（時間軸非依存）
 const MIN_SLOPE = 0.00005;
 const MAX_SLOPE = 0.08;
 const SLOPE_RATIO_MIN = 1.15;
@@ -59,9 +57,7 @@ const MIN_TOUCHES_PER_LINE = 3;
 const MIN_SCORE = 0.5;
 const MIN_CONTAINMENT = 0.85;
 
-// Touch Validation
-const MAX_TOUCH_GAP_BARS = 25;
-const MAX_START_GAP_BARS = 10;
+// Touch Validation（時間軸非依存）
 const MIN_ALTERNATION = 0.25;
 const MIN_TOUCH_BALANCE = 0.45;
 
@@ -79,9 +75,7 @@ const CONFIDENCE_MIN = 0.65;
 const CONFIDENCE_MAX = 0.95;
 const CONFIDENCE_BOOST = 0.3;
 
-// Forming wedge params
-const FORMING_WINDOW_MIN = 20;
-const FORMING_WINDOW_MAX = 120;
+// Forming wedge params（時間軸非依存）
 const FORMING_MIN_CONTAINMENT = 0.75;
 const FORMING_MAX_CONV_RATIO = 0.8;
 const FORMING_BREAKOUT_FACTOR = 0.015;
@@ -92,9 +86,40 @@ const ATR_BREAK_THRESHOLD = 0.3;
 // Downsample
 const MAX_DIAGRAM_POINTS = 6;
 
-// Forming duration
-const FORMING_MIN_BARS_BEFORE_BREAK = 15;
+// Forming duration（時間軸非依存）
 const FORMING_PRICE_TOLERANCE_PCT = 0.01;
+
+// ── 時間軸別バーカウント ──
+
+/**
+ * 時間軸別ウェッジ検出のバー数パラメータ。
+ *
+ * 1day を基準（25 日 windowMin、90 日 windowMax）とし、他時間軸では
+ * 「日数 × bars-per-day」で換算する。1week / 1month など bpd<1 で
+ * バー数が小さくなりすぎる時間軸では、構造上の最低本数で下限を確保する。
+ *
+ * - windowSizeMin / windowSizeMax / windowStep: 完成済みウェッジのスキャンウィンドウ
+ * - maxTouchGap: 隣接タッチ間の最大ギャップ
+ * - maxStartGap: 上下最初タッチの開始位置差
+ * - formingWindowMin / formingWindowMax: 形成中ウェッジのスキャンウィンドウ
+ * - formingMinBarsBeforeBreak: 形成中ブレイク判定の最小バー数
+ */
+function getWedgeBarParams(tf: string) {
+	const bpd = barsPerDay(tf);
+	const MIN_STRUCTURAL = 15;
+	return {
+		windowSizeMin: Math.max(MIN_STRUCTURAL, Math.round(25 * bpd)),
+		windowSizeMax: Math.max(MIN_STRUCTURAL + 5, Math.round(90 * bpd)),
+		windowStep: Math.max(1, Math.round(5 * bpd)),
+		maxTouchGap: Math.max(8, Math.round(25 * bpd)),
+		maxStartGap: Math.max(3, Math.round(10 * bpd)),
+		formingWindowMin: Math.max(MIN_STRUCTURAL - 5, Math.round(20 * bpd)),
+		formingWindowMax: Math.max(MIN_STRUCTURAL + 5, Math.round(120 * bpd)),
+		formingMinBarsBeforeBreak: Math.max(5, Math.round(15 * bpd)),
+	};
+}
+
+type WedgeBarParams = ReturnType<typeof getWedgeBarParams>;
 
 // ── Intermediate types ──
 
@@ -176,6 +201,7 @@ function validateRegressionCandidate(
 	lower: RegLine,
 	startIdx: number,
 	endIdx: number,
+	barParams: WedgeBarParams,
 	debugCandidates: CandDebugEntry[],
 ): RegressionValidation | null {
 	// --- Apex バリデーション（UAlgo 方式） ---
@@ -242,13 +268,13 @@ function validateRegressionCandidate(
 	const upperMaxGap = calcMaxTouchGap(touches.upperTouches);
 	const lowerMaxGap = calcMaxTouchGap(touches.lowerTouches);
 	const maxGap = Math.max(upperMaxGap, lowerMaxGap);
-	if (maxGap > MAX_TOUCH_GAP_BARS) {
+	if (maxGap > barParams.maxTouchGap) {
 		debugCandidates.push({
 			type: wedgeType,
 			accepted: false,
 			reason: 'touch_gap_too_large',
 			indices: [startIdx, endIdx],
-			details: { upperMaxGap, lowerMaxGap, maxGap, maxAllowed: MAX_TOUCH_GAP_BARS },
+			details: { upperMaxGap, lowerMaxGap, maxGap, maxAllowed: barParams.maxTouchGap },
 		});
 		return null;
 	}
@@ -258,7 +284,7 @@ function validateRegressionCandidate(
 	const firstLowerTouch = touches.lowerTouches.find((t) => !t.isBreak);
 	if (firstUpperTouch && firstLowerTouch) {
 		const startGap = Math.abs(firstUpperTouch.index - firstLowerTouch.index);
-		if (startGap > MAX_START_GAP_BARS) {
+		if (startGap > barParams.maxStartGap) {
 			debugCandidates.push({
 				type: wedgeType,
 				accepted: false,
@@ -268,7 +294,7 @@ function validateRegressionCandidate(
 					firstUpperIdx: firstUpperTouch.index,
 					firstLowerIdx: firstLowerTouch.index,
 					startGap,
-					maxAllowed: MAX_START_GAP_BARS,
+					maxAllowed: barParams.maxStartGap,
 				},
 			});
 			return null;
@@ -299,7 +325,7 @@ function validateRegressionCandidate(
 	}
 
 	const insideRatio = calcInsideRatioEx(candles, upper, lower, startIdx, endIdx);
-	const durationParams = { windowSizeMin: WINDOW_SIZE_MIN, windowSizeMax: WINDOW_SIZE_MAX };
+	const durationParams = { windowSizeMin: barParams.windowSizeMin, windowSizeMax: barParams.windowSizeMax };
 	const score = calculatePatternScoreEx({
 		fitScore: (upper.r2 + lower.r2) / 2,
 		convergeScore: conv.score ?? 0,
@@ -511,7 +537,11 @@ function buildRegressionEntry(
 
 // ── Phase 2: 回帰ベース完成済みウェッジ検出 ──
 
-function detectRegressionWedges(pivotData: PivotData, ctx: DetectContext): DeduplicablePattern[] {
+function detectRegressionWedges(
+	pivotData: PivotData,
+	barParams: WedgeBarParams,
+	ctx: DetectContext,
+): DeduplicablePattern[] {
 	const { candles, pivots, want, lrWithR2, debugCandidates } = ctx;
 	const patterns: DeduplicablePattern[] = [];
 
@@ -519,9 +549,9 @@ function detectRegressionWedges(pivotData: PivotData, ctx: DetectContext): Dedup
 		swingDepth: ctx.swingDepth,
 		minBarsBetweenSwings: ctx.minDist,
 		tolerancePct: ctx.tolerancePct,
-		windowSizeMin: WINDOW_SIZE_MIN,
-		windowSizeMax: WINDOW_SIZE_MAX,
-		windowStep: WINDOW_STEP,
+		windowSizeMin: barParams.windowSizeMin,
+		windowSizeMax: barParams.windowSizeMax,
+		windowStep: barParams.windowStep,
 		minSlope: MIN_SLOPE,
 		maxSlope: MAX_SLOPE,
 		slopeRatioMin: SLOPE_RATIO_MIN,
@@ -679,7 +709,16 @@ function detectRegressionWedges(pivotData: PivotData, ctx: DetectContext): Dedup
 			continue;
 		}
 
-		const v = validateRegressionCandidate(candles, wedgeType, upper, lower, w.startIdx, w.endIdx, debugCandidates);
+		const v = validateRegressionCandidate(
+			candles,
+			wedgeType,
+			upper,
+			lower,
+			w.startIdx,
+			w.endIdx,
+			barParams,
+			debugCandidates,
+		);
 		if (!v) continue;
 		const entry = buildRegressionEntry(
 			candles,
@@ -798,6 +837,7 @@ function findLowerTrendlineF(
 
 function detectFormingWedges(
 	pivotData: PivotData,
+	barParams: WedgeBarParams,
 	existingPatterns: readonly DeduplicablePattern[],
 	ctx: DetectContext,
 ): DeduplicablePattern[] {
@@ -821,14 +861,14 @@ function detectFormingWedges(
 
 	// ウィンドウスキャン
 	const fWindows: Array<{ startIdx: number; endIdx: number }> = [];
-	for (let size = FORMING_WINDOW_MIN; size <= FORMING_WINDOW_MAX; size += WINDOW_STEP) {
-		for (let startIdx = 0; startIdx + size < candles.length; startIdx += WINDOW_STEP) {
+	for (let size = barParams.formingWindowMin; size <= barParams.formingWindowMax; size += barParams.windowStep) {
+		for (let startIdx = 0; startIdx + size < candles.length; startIdx += barParams.windowStep) {
 			fWindows.push({ startIdx, endIdx: startIdx + size });
 		}
 	}
 	// 最新に揃えた特別ウィンドウ
 	const lastIdx = candles.length - 1;
-	for (let size = FORMING_WINDOW_MIN; size <= FORMING_WINDOW_MAX; size += WINDOW_STEP) {
+	for (let size = barParams.formingWindowMin; size <= barParams.formingWindowMax; size += barParams.windowStep) {
 		const s = Math.max(0, lastIdx - size);
 		fWindows.push({ startIdx: s, endIdx: lastIdx });
 	}
@@ -945,7 +985,7 @@ function detectFormingWedges(
 		let breakoutIdx = -1;
 		let breakoutDirection: 'up' | 'down' | null = null;
 		for (
-			let i = startIdx + Math.max(FORMING_MIN_BARS_BEFORE_BREAK, Math.floor((endIdx - startIdx) * 0.3));
+			let i = startIdx + Math.max(barParams.formingMinBarsBeforeBreak, Math.floor((endIdx - startIdx) * 0.3));
 			i <= lastIdx;
 			i++
 		) {
@@ -1065,9 +1105,10 @@ function detectFormingWedges(
 // ── Orchestrator ──
 
 export function detectWedges(ctx: DetectContext): DetectResult {
+	const barParams = getWedgeBarParams(ctx.type);
 	const pivotData = preparePivots(ctx);
-	const regressionPatterns = detectRegressionWedges(pivotData, ctx);
-	const formingPatterns = detectFormingWedges(pivotData, regressionPatterns, ctx);
+	const regressionPatterns = detectRegressionWedges(pivotData, barParams, ctx);
+	const formingPatterns = detectFormingWedges(pivotData, barParams, regressionPatterns, ctx);
 	// includeForming=false のときに forming / near_completion を残すと、
 	// 後段 globalDedup で completed が confidence/end-time の比較に負けて
 	// 消える可能性があるため、dedup より前で落とす。

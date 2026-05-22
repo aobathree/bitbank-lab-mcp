@@ -4,7 +4,7 @@
  */
 import { generatePatternDiagram, type PatternDiagramData } from '../../lib/pattern-diagrams.js';
 import { MIN_CONFIDENCE } from '../patterns/config.js';
-import { finalizeConf, periodScoreDays } from './helpers.js';
+import { daysPerBar, finalizeConf, periodScoreDays } from './helpers.js';
 import { clamp01, relDev } from './regression.js';
 import type { DeduplicablePattern, DetectContext, DetectResult } from './types.js';
 import { pushCand } from './types.js';
@@ -465,7 +465,7 @@ function tryFormingTripleTop(ctx: DetectContext): DeduplicablePattern | null {
 	const lastIdx = candles.length - 1;
 	const currentPrice = Number(candles[lastIdx]?.close ?? NaN);
 	const isoAt = (i: number) => candles[i]?.isoTime || '';
-	const daysPerBar = ctx.type === '1day' ? 1 : ctx.type === '1week' ? 7 : 1;
+	const dpb = daysPerBar(ctx.type);
 	const tripleTolerancePct = tolerancePct * FORMING_TOLERANCE_MULTIPLIER;
 
 	if (allPeaks.length < 2) return null;
@@ -484,7 +484,7 @@ function tryFormingTripleTop(ctx: DetectContext): DeduplicablePattern | null {
 		if (currentDiff > tripleTolerancePct || currentPrice < avgPeakPrice * 0.95) continue;
 
 		const formationBars = Math.max(0, lastIdx - peak1.idx);
-		const patternDays = Math.round(formationBars * daysPerBar);
+		const patternDays = Math.round(formationBars * dpb);
 		if (patternDays < FORMING_MIN_DAYS || patternDays > FORMING_MAX_DAYS) continue;
 
 		const progress = Math.min(1, currentPrice / avgPeakPrice);
@@ -531,7 +531,7 @@ function tryFormingTripleBottom(ctx: DetectContext): DeduplicablePattern | null 
 	const lastIdx = candles.length - 1;
 	const currentPrice = Number(candles[lastIdx]?.close ?? NaN);
 	const isoAt = (i: number) => candles[i]?.isoTime || '';
-	const daysPerBar = ctx.type === '1day' ? 1 : ctx.type === '1week' ? 7 : 1;
+	const dpb = daysPerBar(ctx.type);
 	const tripleTolerancePct = tolerancePct * FORMING_TOLERANCE_MULTIPLIER;
 
 	if (allValleys.length < 2) return null;
@@ -556,7 +556,7 @@ function tryFormingTripleBottom(ctx: DetectContext): DeduplicablePattern | null 
 		if (currentPrice < avgValleyPrice * 0.98 || currentPrice > avgPeakPrice * 1.02) continue;
 
 		const formationBars = Math.max(0, lastIdx - valley1.idx);
-		const patternDays = Math.round(formationBars * daysPerBar);
+		const patternDays = Math.round(formationBars * dpb);
 		if (patternDays < FORMING_MIN_DAYS || patternDays > FORMING_MAX_DAYS) continue;
 
 		const progress = (currentPrice - avgValleyPrice) / Math.max(1e-12, avgPeakPrice - avgValleyPrice);

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+	barsPerDay,
 	calcAlternationScoreEx,
 	calcApex,
 	calcDurationScoreEx,
@@ -7,6 +8,7 @@ import {
 	calculatePatternScoreEx,
 	checkContainment,
 	checkConvergenceEx,
+	daysPerBar,
 	deduplicatePatterns,
 	detectWedgeBreak,
 	determineWedgeType,
@@ -435,5 +437,48 @@ describe('globalDedup', () => {
 
 	it('空配列は空を返す', () => {
 		expect(globalDedup([])).toEqual([]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// barsPerDay / daysPerBar
+// ---------------------------------------------------------------------------
+describe('barsPerDay', () => {
+	it('1day は 1 を返す', () => {
+		expect(barsPerDay('1day')).toBe(1);
+	});
+
+	it('intraday は 1 日あたりのバー数を返す', () => {
+		expect(barsPerDay('1hour')).toBe(24);
+		expect(barsPerDay('4hour')).toBe(6);
+		expect(barsPerDay('15min')).toBe(96);
+		expect(barsPerDay('1min')).toBe(1440);
+	});
+
+	it('1week / 1month は 1 未満を返す', () => {
+		expect(barsPerDay('1week')).toBeCloseTo(1 / 7, 10);
+		expect(barsPerDay('1month')).toBeCloseTo(1 / 30, 10);
+	});
+
+	it('未知の time frame は 1 にフォールバック', () => {
+		expect(barsPerDay('unknown' as string)).toBe(1);
+	});
+});
+
+describe('daysPerBar', () => {
+	it('barsPerDay の逆数を返す', () => {
+		expect(daysPerBar('1day')).toBe(1);
+		expect(daysPerBar('1hour')).toBeCloseTo(1 / 24, 10);
+		expect(daysPerBar('1week')).toBe(7);
+		expect(daysPerBar('1month')).toBe(30);
+	});
+
+	it('formationBars × daysPerBar で日数に換算できる', () => {
+		// 1hour × 48 bars = 2 days
+		expect(48 * daysPerBar('1hour')).toBeCloseTo(2, 10);
+		// 1week × 4 bars = 28 days
+		expect(4 * daysPerBar('1week')).toBe(28);
+		// 1month × 3 bars = 90 days
+		expect(3 * daysPerBar('1month')).toBe(90);
 	});
 });

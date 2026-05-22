@@ -14,42 +14,13 @@
  * 7. Apply deduplicatePatterns() before returning
  */
 
-import { calcATR, deduplicatePatterns, finalizeConf } from './helpers.js';
+import { barsPerDay, calcATR, deduplicatePatterns, finalizeConf } from './helpers.js';
 import { clamp01 } from './regression.js';
 import type { DetectContext, DetectResult, PatternEntry } from './types.js';
 
 // ---------------------------------------------------------------------------
 // 時間軸別パラメータ — 「日数」ベースで定義し、bars-per-day で変換
 // ---------------------------------------------------------------------------
-function barsPerDay(tf: string): number {
-	switch (tf) {
-		case '1min':
-			return 1440;
-		case '5min':
-			return 288;
-		case '15min':
-			return 96;
-		case '30min':
-			return 48;
-		case '1hour':
-			return 24;
-		case '4hour':
-			return 6;
-		case '8hour':
-			return 3;
-		case '12hour':
-			return 2;
-		case '1day':
-			return 1;
-		case '1week':
-			return 1 / 7;
-		case '1month':
-			return 1 / 30;
-		default:
-			return 1;
-	}
-}
-
 function getFlagParams(tf: string) {
 	const bpd = barsPerDay(tf);
 

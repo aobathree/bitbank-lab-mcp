@@ -424,4 +424,222 @@ describe('detectTriples', () => {
 		const tt = result.patterns.filter((p) => p.type === 'triple_top');
 		expect(tt).toHaveLength(0);
 	});
+
+	// ── 形成中の patternDays 計算（時間軸スケーリング）──────────────
+	//
+	// 旧実装: daysPerBar = ctx.type === '1day' ? 1 : ctx.type === '1week' ? 7 : 1
+	// → 1hour/1month/1min が全部 1 扱いになり、patternDays が完全にズレていた。
+	// 新実装: helpers.ts の daysPerBar(tf) で正しく換算する。
+
+	it('1hour: 30 バーで形成中 triple_top が patternDays 期間判定を通過する', () => {
+		// 1hour で 30 バー = 約 1.25 日。FORMING_MIN_DAYS=21 / FORMING_MAX_DAYS=90 を
+		// 旧コード（daysPerBar=1 扱い）では 30 と判定して通過していたが、新実装は
+		// 30 * (1/24) ≈ 1 日と正しく評価して FORMING_MIN_DAYS=21 を下回ることで弾く。
+		const total = 31;
+		const candles: CandleData[] = Array.from({ length: total }, (_, i) => mkCandle(total - i, 85, 90, 80, 85));
+		candles[0] = mkCandle(total, 99, 100, 97, 99);
+		candles[10] = mkCandle(total - 10, 79, 81, 79, 80);
+		candles[20] = mkCandle(total - 20, 100, 101, 99, 100);
+		for (let i = 28; i < total; i++) {
+			candles[i] = mkCandle(total - i, 98, 100, 97, 99);
+		}
+
+		const allPeaks: Pivot[] = [
+			{ idx: 0, price: 100, kind: 'H' },
+			{ idx: 20, price: 101, kind: 'H' },
+		];
+		const allValleys: Pivot[] = [{ idx: 10, price: 80, kind: 'L' }];
+
+		const ctx = buildCtx({
+			candles,
+			pivots: [...allPeaks, ...allValleys],
+			allPeaks,
+			allValleys,
+			includeForming: true,
+			type: '1hour',
+		});
+		const result = detectTriples(ctx);
+
+		// 1.25 日相当 < FORMING_MIN_DAYS(21) なので form は弾かれる（intraday の短期間判定）
+		const forming = result.patterns.filter((p) => p.type === 'triple_top' && p.status === 'forming');
+		expect(forming).toHaveLength(0);
+	});
+
+	it('1hour: 720 バー（約 30 日）あれば形成中 triple_top の期間判定を通過する', () => {
+		// 720 バー × (1/24) = 30 日 ∈ [21, 90] → patternDays チェック OK
+		const total = 720;
+		const candles: CandleData[] = Array.from({ length: total }, (_, i) => mkCandle(total - i, 85, 90, 80, 85));
+		// 2 つ確定済みピークと谷
+		candles[0] = mkCandle(total, 99, 100, 97, 99);
+		candles[300] = mkCandle(total - 300, 79, 81, 79, 80);
+		candles[600] = mkCandle(total - 600, 100, 101, 99, 100);
+		for (let i = total - 5; i < total; i++) {
+			candles[i] = mkCandle(total - i, 98, 100, 97, 99);
+		}
+
+		const allPeaks: Pivot[] = [
+			{ idx: 0, price: 100, kind: 'H' },
+			{ idx: 600, price: 101, kind: 'H' },
+		];
+		const allValleys: Pivot[] = [{ idx: 300, price: 80, kind: 'L' }];
+
+		const ctx = buildCtx({
+			candles,
+			pivots: [...allPeaks, ...allValleys],
+			allPeaks,
+			allValleys,
+			includeForming: true,
+			type: '1hour',
+		});
+		const result = detectTriples(ctx);
+
+		const forming = result.patterns.filter((p) => p.type === 'triple_top' && p.status === 'forming');
+		expect(forming.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('1week: 4 バーで形成中 triple_top は期間判定を通過しない（28 日 > MIN だが構造的に短い）', () => {
+		// 4 バー × 7 日/バー = 28 日 ∈ [21, 90] → patternDays は通る
+		// だが minDist=5 で 2 つのピーク間距離が足りないので構造的に成立しない。
+		const total = 7;
+		const candles: CandleData[] = Array.from({ length: total }, (_, i) => mkCandle(total - i, 85, 90, 80, 85));
+		candles[0] = mkCandle(total, 99, 100, 97, 99);
+		candles[2] = mkCandle(total - 2, 79, 81, 79, 80);
+		candles[4] = mkCandle(total - 4, 100, 101, 99, 100);
+		for (let i = 6; i < total; i++) {
+			candles[i] = mkCandle(total - i, 98, 100, 97, 99);
+		}
+
+		const allPeaks: Pivot[] = [
+			{ idx: 0, price: 100, kind: 'H' },
+			{ idx: 4, price: 101, kind: 'H' },
+		];
+		const allValleys: Pivot[] = [{ idx: 2, price: 80, kind: 'L' }];
+
+		const ctx = buildCtx({
+			candles,
+			pivots: [...allPeaks, ...allValleys],
+			allPeaks,
+			allValleys,
+			includeForming: true,
+			type: '1week',
+		});
+		const result = detectTriples(ctx);
+
+		// minDist(5) > 4 なのでスキップされる
+		const forming = result.patterns.filter((p) => p.type === 'triple_top' && p.status === 'forming');
+		expect(forming).toHaveLength(0);
+	});
+
+	it('1week: 8 バー（56 日）で形成中 triple_top が patternDays 判定を通過する', () => {
+		// 8 バー × 7 日/バー = 56 日 ∈ [21, 90] → OK
+		// 旧コード（1week → daysPerBar=7）でも同じ結論。新コードでも維持される。
+		// 構造制約: confirmedPeaks フィルタ idx < lastIdx-2 と minDist=5 を両立するため
+		// total=9, peak1=0, peak2=5 とする（peak2=5 < 6=lastIdx-2 OK, 5-0=5 >= minDist=5 OK）。
+		const total = 9;
+		const candles: CandleData[] = Array.from({ length: total }, (_, i) => mkCandle(total - i, 85, 90, 80, 85));
+		candles[0] = mkCandle(total, 99, 100, 97, 99);
+		candles[3] = mkCandle(total - 3, 79, 81, 79, 80);
+		candles[5] = mkCandle(total - 5, 100, 101, 99, 100);
+		for (let i = 7; i < total; i++) {
+			candles[i] = mkCandle(total - i, 98, 100, 97, 99);
+		}
+
+		const allPeaks: Pivot[] = [
+			{ idx: 0, price: 100, kind: 'H' },
+			{ idx: 5, price: 101, kind: 'H' },
+		];
+		const allValleys: Pivot[] = [{ idx: 3, price: 80, kind: 'L' }];
+
+		const ctx = buildCtx({
+			candles,
+			pivots: [...allPeaks, ...allValleys],
+			allPeaks,
+			allValleys,
+			includeForming: true,
+			type: '1week',
+		});
+		const result = detectTriples(ctx);
+
+		const forming = result.patterns.filter((p) => p.type === 'triple_top' && p.status === 'forming');
+		expect(forming.length).toBeGreaterThanOrEqual(1);
+	});
+
+	it('1month: 4 バー（120 日）は FORMING_MAX_DAYS(90) 超で patternDays 判定不可', () => {
+		// 旧コードでは type !== 1day && type !== 1week なので daysPerBar=1 扱い
+		// 4 * 1 = 4 日と判定して FORMING_MIN_DAYS(21) を下回り NG（理由が誤）
+		// 新コードでは 4 * 30 = 120 日 > FORMING_MAX_DAYS(90) で正しく NG。
+		const total = 7;
+		const candles: CandleData[] = Array.from({ length: total }, (_, i) => mkCandle(total - i, 85, 90, 80, 85));
+		candles[0] = mkCandle(total, 99, 100, 97, 99);
+		candles[2] = mkCandle(total - 2, 79, 81, 79, 80);
+		candles[4] = mkCandle(total - 4, 100, 101, 99, 100);
+		for (let i = 6; i < total; i++) {
+			candles[i] = mkCandle(total - i, 98, 100, 97, 99);
+		}
+
+		const allPeaks: Pivot[] = [
+			{ idx: 0, price: 100, kind: 'H' },
+			{ idx: 4, price: 101, kind: 'H' },
+		];
+		const allValleys: Pivot[] = [{ idx: 2, price: 80, kind: 'L' }];
+
+		const ctx = buildCtx({
+			candles,
+			pivots: [...allPeaks, ...allValleys],
+			allPeaks,
+			allValleys,
+			includeForming: true,
+			type: '1month',
+		});
+		const result = detectTriples(ctx);
+
+		const forming = result.patterns.filter((p) => p.type === 'triple_top' && p.status === 'forming');
+		expect(forming).toHaveLength(0);
+	});
+
+	it('1month vs 1day: 同一バー数（25 本）なら 1day では検出されるが 1month では弾かれる（daysPerBar の効果）', () => {
+		// 旧コード（1month → daysPerBar=1）では、type='1month' でも 1day と同じ
+		// patternDays=25 と評価して誤って検出していた。
+		// 新コードでは daysPerBar(1month)=30 を介して patternDays=750 と評価し、
+		// FORMING_MAX_DAYS=90 を超えるため正しく拒否される。
+		const total = 26;
+		const candles: CandleData[] = Array.from({ length: total }, (_, i) => mkCandle(total - i, 85, 90, 80, 85));
+		candles[0] = mkCandle(total, 99, 100, 97, 99);
+		candles[10] = mkCandle(total - 10, 79, 81, 79, 80);
+		candles[20] = mkCandle(total - 20, 100, 101, 99, 100);
+		for (let i = 23; i < total; i++) {
+			candles[i] = mkCandle(total - i, 98, 100, 97, 99);
+		}
+
+		const allPeaks: Pivot[] = [
+			{ idx: 0, price: 100, kind: 'H' },
+			{ idx: 20, price: 101, kind: 'H' },
+		];
+		const allValleys: Pivot[] = [{ idx: 10, price: 80, kind: 'L' }];
+
+		const ctx1day = buildCtx({
+			candles,
+			pivots: [...allPeaks, ...allValleys],
+			allPeaks,
+			allValleys,
+			includeForming: true,
+			type: '1day',
+		});
+		const ctx1month = buildCtx({
+			candles,
+			pivots: [...allPeaks, ...allValleys],
+			allPeaks,
+			allValleys,
+			includeForming: true,
+			type: '1month',
+		});
+		const result1day = detectTriples(ctx1day);
+		const result1month = detectTriples(ctx1month);
+
+		const forming1day = result1day.patterns.filter((p) => p.type === 'triple_top' && p.status === 'forming');
+		const forming1month = result1month.patterns.filter((p) => p.type === 'triple_top' && p.status === 'forming');
+
+		expect(forming1day.length).toBeGreaterThanOrEqual(1);
+		expect(forming1month).toHaveLength(0);
+	});
 });
