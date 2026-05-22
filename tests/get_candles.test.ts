@@ -1032,8 +1032,9 @@ describe('getCandles', () => {
 		});
 
 		it('multi-day: 過半数未満の失敗 → meta.warning に伝播', async () => {
-			// 1hour + date=20240115 + limit=200 → daysNeeded=ceil(200/24)+1=10
-			// 10日のうち 20240106（最古日）の 1 日を失敗させる（1/10 < 0.5）
+			// 1hour + date=20240115 (tz=Asia/Tokyo) + limit=200 → tz 暦日 window 由来の UTC keys
+			//   = [20240107..20240115] の 9 日。
+			// 9 日のうち 20240107（最古日）の 1 日を失敗させる（1/9 < 0.5）。
 			const baseTs = 1705276800000; // 2024-01-15
 			const validRows = Array.from({ length: 24 }, (_, i) => [
 				'100',
@@ -1045,7 +1046,7 @@ describe('getCandles', () => {
 			]);
 			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: unknown) => {
 				const urlStr = String(url);
-				if (urlStr.includes('/1hour/20240106')) {
+				if (urlStr.includes('/1hour/20240107')) {
 					return {
 						ok: true,
 						status: 200,
@@ -1508,6 +1509,166 @@ describe('getCandles', () => {
 			expect(tsList.find((ts: number) => ts >= Date.UTC(2026, 0, 1))).toBeUndefined();
 			// 末尾は UTC 2025-12-31 00:00（= JST 12/31 09:00）
 			expect(tsList.at(-1)).toBe(Date.UTC(2025, 11, 31));
+		});
+	});
+
+	// ── PR-N: multi-day fetch 範囲は tz 暦日 window から導出する ──
+
+	describe('multi-day fetch 範囲は tz 暦日 window から導出する', () => {
+		/** YYYY-MM-DD UTC start-of-day を ms に */
+		const dayMs = (iso: string) => {
+			const [y, m, d] = iso.split('-').map(Number);
+			return Date.UTC(y, m - 1, d);
+		};
+		const hourMs = (iso: string, h: number) => dayMs(iso) + h * 3600000;
+
+		/** UTC 暦日キー (YYYYMMDD) のローソク 24 本 (0..23 UTC) を返す mock factory */
+		const buildPerUtcDayMock = () =>
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: unknown) => {
+				const urlStr = String(url);
+				const m = urlStr.match(/\/1hour\/(\d{8})$/);
+				const dateKey = m ? m[1] : '20251002';
+				const y = Number(dateKey.slice(0, 4));
+				const mo = Number(dateKey.slice(4, 6));
+				const d = Number(dateKey.slice(6, 8));
+				const baseTs = Date.UTC(y, mo - 1, d);
+				const ohlcv = Array.from({ length: 24 }, (_, i) => [
+					'100',
+					'110',
+					'90',
+					'105',
+					'1.0',
+					String(baseTs + i * 3600000),
+				]);
+				return {
+					ok: true,
+					status: 200,
+					statusText: 'OK',
+					json: async () => ({ success: 1, data: { candlestick: [{ ohlcv }] } }),
+				} as Response;
+			});
+
+		it("tz='America/New_York' × date=20251002 × 1hour × limit=24: /20251002 と /20251003 の両方を fetch する", async () => {
+			// NY (DST 中, UTC-4) の 10/2 は UTC 10/2 04:00 〜 UTC 10/3 03:59 → 旧実装で漏れていた '次の UTC 日' を含む。
+			buildPerUtcDayMock();
+			const res = await getCandles('btc_jpy', '1hour', '20251002', 24, 'America/New_York');
+			assertOk(res);
+
+			const calledUrls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251002'))).toBe(true);
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251003'))).toBe(true);
+
+			// normalized 24 本が NY 10/2 0:00..23:00 = UTC 10/2 04:00..10/3 03:00 に収まる。
+			expect(res.data.normalized).toHaveLength(24);
+			const tsList = res.data.normalized.map((c: { timestamp: number }) => c.timestamp);
+			expect(tsList[0]).toBe(hourMs('2025-10-02', 4));
+			expect(tsList.at(-1)).toBe(hourMs('2025-10-03', 3));
+		});
+
+		it("tz='America/Los_Angeles' × date=20251002 × 1hour × limit=24: /20251003 まで fetch する", async () => {
+			// LA (DST 中, UTC-7) の 10/2 は UTC 10/2 07:00 〜 UTC 10/3 06:59。
+			buildPerUtcDayMock();
+			const res = await getCandles('btc_jpy', '1hour', '20251002', 24, 'America/Los_Angeles');
+			assertOk(res);
+
+			const calledUrls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251002'))).toBe(true);
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251003'))).toBe(true);
+
+			expect(res.data.normalized).toHaveLength(24);
+			const tsList = res.data.normalized.map((c: { timestamp: number }) => c.timestamp);
+			expect(tsList[0]).toBe(hourMs('2025-10-02', 7));
+			expect(tsList.at(-1)).toBe(hourMs('2025-10-03', 6));
+		});
+
+		it("tz='Asia/Tokyo' × date=20251002 × 1hour × limit=24: /20251001 と /20251002 を fetch、/20251003 は fetch しない", async () => {
+			// 既存 PR-3 ケースの回帰確認。JST (UTC+9) の 10/2 は UTC 10/1 15:00 〜 UTC 10/2 14:59。
+			buildPerUtcDayMock();
+			const res = await getCandles('btc_jpy', '1hour', '20251002', 24, 'Asia/Tokyo');
+			assertOk(res);
+
+			const calledUrls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251001'))).toBe(true);
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251002'))).toBe(true);
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251003'))).toBe(false);
+		});
+
+		it("tz='UTC' × date=20251002 × 1hour × limit=24: window がローカル日と一致するため 1 UTC 日のみ fetch", async () => {
+			// UTC 10/2 0:00 〜 UTC 10/2 23:59、limit=24 では lookback がローカル日終端から 0:00 まで戻るため
+			// windowStart = localDayStart = UTC 10/2 0:00。UTC range は 1 日のみ → 単一 fetch 経路。
+			buildPerUtcDayMock();
+			const res = await getCandles('btc_jpy', '1hour', '20251002', 24, 'UTC');
+			assertOk(res);
+
+			const calledUrls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251002'))).toBe(true);
+			// 隣接 UTC 日は要求されない
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251001'))).toBe(false);
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251003'))).toBe(false);
+
+			expect(res.data.normalized).toHaveLength(24);
+			const tsList = res.data.normalized.map((c: { timestamp: number }) => c.timestamp);
+			expect(tsList[0]).toBe(hourMs('2025-10-02', 0));
+			expect(tsList.at(-1)).toBe(hourMs('2025-10-02', 23));
+		});
+
+		it("tz='Asia/Tokyo' × date=20251002 × 1min × limit=2880 (2 日分): /20251001 と /20251002 が fetch 範囲に含まれる", async () => {
+			vi.spyOn(globalThis, 'fetch').mockImplementation(async (url: unknown) => {
+				const urlStr = String(url);
+				const m = urlStr.match(/\/1min\/(\d{8})$/);
+				const dateKey = m ? m[1] : '20251002';
+				const y = Number(dateKey.slice(0, 4));
+				const mo = Number(dateKey.slice(4, 6));
+				const d = Number(dateKey.slice(6, 8));
+				const baseTs = Date.UTC(y, mo - 1, d);
+				const ohlcv = Array.from({ length: 1440 }, (_, i) => [
+					'100',
+					'110',
+					'90',
+					'105',
+					'1.0',
+					String(baseTs + i * 60_000),
+				]);
+				return {
+					ok: true,
+					status: 200,
+					statusText: 'OK',
+					json: async () => ({ success: 1, data: { candlestick: [{ ohlcv }] } }),
+				} as Response;
+			});
+
+			const res = await getCandles('btc_jpy', '1min', '20251002', 2880, 'Asia/Tokyo');
+			assertOk(res);
+
+			const calledUrls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
+			expect(calledUrls.some((u) => u.endsWith('/1min/20251001'))).toBe(true);
+			expect(calledUrls.some((u) => u.endsWith('/1min/20251002'))).toBe(true);
+		});
+
+		it("tz='America/New_York' × date=20251002 × 1hour × limit=1: 小 limit でもローカル日が window に含まれて空にならない", async () => {
+			// Math.min(localDayStart, lookbackStart) のおかげで、limit=1 でも windowStart=NY 10/2 0:00=UTC 10/2 04:00
+			// → UTC keys=[20251002, 20251003]。lookback が支配的でない場合の安全弁。
+			buildPerUtcDayMock();
+			const res = await getCandles('btc_jpy', '1hour', '20251002', 1, 'America/New_York');
+			assertOk(res);
+
+			const calledUrls = (globalThis.fetch as ReturnType<typeof vi.fn>).mock.calls.map((call) => String(call[0]));
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251002'))).toBe(true);
+			expect(calledUrls.some((u) => u.endsWith('/1hour/20251003'))).toBe(true);
+
+			// limit=1 なので末尾 1 本: NY 10/2 23:00 = UTC 10/3 03:00。
+			expect(res.data.normalized).toHaveLength(1);
+			expect(res.data.normalized[0]?.timestamp).toBe(hourMs('2025-10-03', 3));
+		});
+
+		it('DST 境界日 (NY 2025-11-02) でも結果が空にならずクラッシュしない', async () => {
+			// NY は 2025-11-02 02:00 で DST 終了 → 11/2 は 25 時間ある。
+			// window は dayjs.tz の startOf/endOf に依存。空配列にならず assertOk できることだけ確認する
+			// (DST 境界の厳密な bar count 整合は本 PR スコープ外)。
+			buildPerUtcDayMock();
+			const res = await getCandles('btc_jpy', '1hour', '20251102', 24, 'America/New_York');
+			assertOk(res);
+			expect(res.data.normalized.length).toBeGreaterThan(0);
 		});
 	});
 });

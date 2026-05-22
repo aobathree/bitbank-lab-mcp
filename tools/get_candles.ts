@@ -259,15 +259,47 @@ export default async function getCandles(
 		: 1;
 	const needsMultiYear = isYearlyType && yearsNeeded > 1;
 
-	// 日単位タイプの場合、複数日取得が必要かどうかを判定。
-	// bitbank API は UTC 暦日でグルーピングするため、anchorTz != 'UTC'（典型は JST）の場合は
-	// 「tz 暦日」と「UTC 暦日」が最大 1 日ずれる。例: JST 10/2 は UTC 10/1 15:00〜10/2 14:59 に
-	// またがるため、JST 10/2 の 24 本（1hour）を完全に取得するには UTC 10/1 + UTC 10/2 の 2 日を fetch する必要がある。
-	// 既存の Math.ceil(limit / barsPerDay) + 1 はちょうど境界 1 日分を吸収するバッファとして機能する
-	// （barsPerDay 本ぴったり要求しても +1 で前日まで fetch される）。tz=UTC の場合は +1 が常に過剰 fetch になるが、
-	// 安全側に倒した動作として許容する。
-	const daysNeeded = isDailyType ? Math.ceil(limit / barsPerDay) + 1 : 1;
-	const needsMultiDay = isDailyType && daysNeeded > 1;
+	// 日単位タイプの場合、tz 暦日 window から UTC 暦日 key set を導出する。
+	// bitbank /candlestick API は UTC 暦日でグルーピングするため、anchorTz != 'UTC' の場合は
+	// 「tz 暦日」と「UTC 暦日」が最大 1 日ずれる。例:
+	//   - JST 10/2 (UTC+9) = UTC 10/1 15:00〜10/2 14:59 → /20251001 + /20251002 を fetch
+	//   - NY 10/2 (UTC-4, DST 時) = UTC 10/2 04:00〜10/3 03:59 → /20251002 + /20251003 を fetch
+	// 旧実装は date-1, date-2, ... と過去方向にしか拡張しなかったため UTC より西の tz では
+	// 「次の UTC 日」が取れずローカル日の後半が欠落していた。
+	//
+	// Window 計算:
+	//   localDayStartMs / localDayEndMs = tz 暦日の 0:00 / 23:59:59.999
+	//   lookbackStartMs = localDayEndMs - (limit - 1) * intervalMs（limit 本を anchor 終端に揃える）
+	//   windowStartMs = Math.min(localDayStart, lookbackStart) ← 小 limit でも tz 暦日全体を window に含める
+	//   windowEndMs = localDayEndMs
+	// → windowStart..windowEnd と交差する UTC 暦日 (YYYYMMDD) を昇順 inclusive で列挙。
+	//
+	// UTC 日数のスケール: limit 上限 (multiDay=10000) と intervalMs の積で決まる。
+	// 例: tz='America/New_York' × 1min × limit=10000 → 約 7 日分 + tz ズレ 1 日 = 8 UTC 日 → OK。
+	const multiDayUtcKeys: string[] = [];
+	if (isDailyType) {
+		const ymd = dateCheck.value;
+		const y = ymd.slice(0, 4);
+		const m = ymd.slice(4, 6);
+		const d = ymd.slice(6, 8);
+		const localDayStartMs = dayjs.tz(`${y}-${m}-${d}`, anchorTz).startOf('day').valueOf();
+		const localDayEndMs = dayjs.tz(`${y}-${m}-${d}`, anchorTz).endOf('day').valueOf();
+		const intervalMsForDaily = INTERVAL_MS[String(type)] ?? 3_600_000;
+		const lookbackStartMs = localDayEndMs - (limit - 1) * intervalMsForDaily;
+		const windowStartMs = Math.min(localDayStartMs, lookbackStartMs);
+		const windowEndMs = localDayEndMs;
+
+		let cursor = dayjs.utc(windowStartMs).startOf('day');
+		const endCursor = dayjs.utc(windowEndMs).startOf('day');
+		while (cursor.valueOf() <= endCursor.valueOf()) {
+			multiDayUtcKeys.push(cursor.format('YYYYMMDD'));
+			cursor = cursor.add(1, 'day');
+		}
+	}
+	// needsMultiDay 判定: UTC 暦日 range が 2 日以上 or limit > barsPerDay。
+	// 後者は実質的に前者を含意するが（limit が一日分を超えるなら時間軸も一日を跨ぐ）、
+	// 防御的に OR で評価する。
+	const needsMultiDay = isDailyType && (multiDayUtcKeys.length >= 2 || limit > barsPerDay);
 
 	// 複数年/複数日取得の場合は上限を緩和
 	const maxLimit = needsMultiYear
@@ -317,11 +349,10 @@ export default async function getCandles(
 		} else if (needsMultiDay) {
 			// 複数日の並列取得（1hour, 30min, etc.）
 			// bitbank API レート制限対策: 3 並列 + バッチ間 500ms → 約 6 req/s に抑える
-			const baseDate = dayjs(dateCheck.value, 'YYYYMMDD');
-			const dates = Array.from({ length: daysNeeded }, (_, i) => baseDate.subtract(i, 'day').format('YYYYMMDD'));
+			// fetch する UTC 暦日 key set は tz 暦日 window から既に導出済 (multiDayUtcKeys, 昇順)。
 
 			const merged = await mergeChunks(
-				dates,
+				multiDayUtcKeys,
 				(key) => fetchCandleChunk(chk.pair, type, key, { timeoutMs: CANDLE_FETCH.chunkTimeoutMs }),
 				{
 					batched: {
@@ -353,7 +384,7 @@ export default async function getCandles(
 			ohlcvs = merged.rows;
 			json = {
 				data: { candlestick: [{ ohlcv: ohlcvs }] },
-				_multiDay: { daysRequested: daysNeeded, totalFetched: ohlcvs.length },
+				_multiDay: { daysRequested: multiDayUtcKeys.length, totalFetched: ohlcvs.length },
 			};
 		} else {
 			// 従来の単一リクエスト
