@@ -45,6 +45,7 @@ analyze_my_portfolio(include_pnl=true, include_technical=true, include_deposit_w
 【データ】ツール content テキストのみ参照（structuredContent は見えない）。末尾 JSON の data を使う:
 - グラフ: **monthly_equity_series**（月次タブ・日次全点）/ **yearly_equity_series**（年次タブ・月次全点）
 - 月初比/年初比の2点（monthly_performance / yearly_performance の start→current）だけで折れ線を描かない
+- equity_series は include_pnl=true なら常に populated。summary 先頭の「※ 資産推移シリーズ:...」警告行（jpy_only / fallback_only / partial_fallback）はそのままユーザー向け注記に転載する
 - 現在の資産残高（total_jpy_value）、holdings_performance、technical
 - トップに含み損・account_return・全履歴実現損益は出さない
 

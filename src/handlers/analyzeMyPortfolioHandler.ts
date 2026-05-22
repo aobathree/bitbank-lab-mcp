@@ -317,6 +317,13 @@ export default async function analyzeMyPortfolioHandler(args: {
 		let dailyPerformance: PeriodPerformance | undefined;
 		let monthlyEquitySeries: EquityPoint[] | undefined;
 		let yearlyEquitySeries: EquityPoint[] | undefined;
+		// equitySeriesQuality: equity series が現在価格フォールバックに依存している度合い。
+		//   complete         — 全保有暗号資産で daily candle 取得済（履歴正確）
+		//   partial_fallback — 一部資産で candle 欠落 → 現在価格代替
+		//   fallback_only    — 全保有暗号資産で candle 欠落 → 全期間現在価格代替
+		//   jpy_only         — JPY のみ保有（価格情報は不要、入出金/約定のみ反映）
+		let equitySeriesQuality: 'complete' | 'partial_fallback' | 'fallback_only' | 'jpy_only' | undefined;
+		let equitySeriesFallbackAssets: string[] = [];
 		if (include_pnl) {
 			const candlePriceData = await candlePricePromise;
 			const currentJpyValueRounded = Math.round(totalJpyValue);
@@ -340,45 +347,74 @@ export default async function analyzeMyPortfolioHandler(args: {
 			);
 
 			// 6.7. 資産推移時系列データの構築（月次: 日次点、年次: 月次点）
-			if (candlePriceData.dailyPrices.size > 0) {
-				const holdingsForReconstruction = nonZeroAssets.map((a) => ({ asset: a.asset, amount: a.onhand_amount }));
-				const nowJst = dayjs().tz('Asia/Tokyo');
+			// candle 取得状況に関わらず必ず構築する。JPY のみ保有 / 全 candle 失敗時も
+			// content に series を含めないと LLM が 2 点だけで折れ線を描いてしまい
+			// プロンプト仕様（"2 点だけで折れ線を描かない"）に反するため。
+			// fallbackPrices=prices を渡すと、daily candle が無い資産は現在 ticker 価格で
+			// 代替され、historical 点と最終点 currentValueJpy のスケールが揃う。
+			const holdingsForReconstruction = nonZeroAssets.map((a) => ({ asset: a.asset, amount: a.onhand_amount }));
+			const nowJst = dayjs().tz('Asia/Tokyo');
 
-				// Monthly: daily points from month start through today 00:00 JST, + current
-				const monthDates: ReturnType<typeof dayjs>[] = [];
-				let d = dayjs(boundaries.monthStartMs).tz('Asia/Tokyo');
-				const todayStart = nowJst.startOf('day');
-				while (!d.isAfter(todayStart)) {
-					monthDates.push(d);
-					d = d.add(1, 'day');
-				}
-				monthlyEquitySeries = buildEquitySeries(
-					monthDates,
-					holdingsForReconstruction,
-					allTrades,
-					dwData,
-					candlePriceData.dailyPrices,
-					currentJpyValueRounded,
-					boundaries.nowIso,
-				);
+			// Monthly: daily points from month start through today 00:00 JST, + current
+			const monthDates: ReturnType<typeof dayjs>[] = [];
+			let d = dayjs(boundaries.monthStartMs).tz('Asia/Tokyo');
+			const todayStart = nowJst.startOf('day');
+			while (!d.isAfter(todayStart)) {
+				monthDates.push(d);
+				d = d.add(1, 'day');
+			}
+			monthlyEquitySeries = buildEquitySeries(
+				monthDates,
+				holdingsForReconstruction,
+				allTrades,
+				dwData,
+				candlePriceData.dailyPrices,
+				currentJpyValueRounded,
+				boundaries.nowIso,
+				prices,
+			);
 
-				// Yearly: monthly points from year start through current month start, + current
-				const yearDates: ReturnType<typeof dayjs>[] = [];
-				let m = dayjs(boundaries.yearStartMs).tz('Asia/Tokyo');
-				const currentMonthStart = nowJst.startOf('month');
-				while (!m.isAfter(currentMonthStart)) {
-					yearDates.push(m);
-					m = m.add(1, 'month');
+			// Yearly: monthly points from year start through current month start, + current
+			const yearDates: ReturnType<typeof dayjs>[] = [];
+			let m = dayjs(boundaries.yearStartMs).tz('Asia/Tokyo');
+			const currentMonthStart = nowJst.startOf('month');
+			while (!m.isAfter(currentMonthStart)) {
+				yearDates.push(m);
+				m = m.add(1, 'month');
+			}
+			yearlyEquitySeries = buildEquitySeries(
+				yearDates,
+				holdingsForReconstruction,
+				allTrades,
+				dwData,
+				candlePriceData.dailyPrices,
+				currentJpyValueRounded,
+				boundaries.nowIso,
+				prices,
+			);
+
+			// equity series のデータ品質を判定。LLM が現在価格代替に気づけるよう summary / meta に明示する。
+			// 判定基準: 「年初以降の daily candle が1件でもあるか」= 当年内の historical price が辿れるか。
+			// `dp.size > 0` だけだと、古い fixture や stale candle が混じったときに「complete」を誤判定する。
+			const cryptoAssetsInPortfolio = nonZeroAssets.filter((a) => a.asset !== 'jpy').map((a) => a.asset);
+			if (cryptoAssetsInPortfolio.length === 0) {
+				equitySeriesQuality = 'jpy_only';
+			} else {
+				equitySeriesFallbackAssets = cryptoAssetsInPortfolio.filter((a) => {
+					const dp = candlePriceData.dailyPrices.get(a);
+					if (!dp || dp.size === 0) return true;
+					for (const ts of dp.keys()) {
+						if (ts >= boundaries.yearStartMs) return false;
+					}
+					return true;
+				});
+				if (equitySeriesFallbackAssets.length === 0) {
+					equitySeriesQuality = 'complete';
+				} else if (equitySeriesFallbackAssets.length === cryptoAssetsInPortfolio.length) {
+					equitySeriesQuality = 'fallback_only';
+				} else {
+					equitySeriesQuality = 'partial_fallback';
 				}
-				yearlyEquitySeries = buildEquitySeries(
-					yearDates,
-					holdingsForReconstruction,
-					allTrades,
-					dwData,
-					candlePriceData.dailyPrices,
-					currentJpyValueRounded,
-					boundaries.nowIso,
-				);
 			}
 		}
 
@@ -616,6 +652,17 @@ export default async function analyzeMyPortfolioHandler(args: {
 			lines.push('※ 出金元本は外部フローとして除外、出金手数料はコストとして performance に含む');
 		}
 		if (monthlyEquitySeries && monthlyEquitySeries.length > 0) {
+			// 品質警告: series が現在価格フォールバック・JPY のみ等の場合は LLM がデータの不完全性を把握できるよう明示
+			if (equitySeriesQuality === 'jpy_only') {
+				lines.push('※ 資産推移シリーズ: JPY のみ保有のため、価格変動は反映されません（入出金・約定の影響のみ）');
+			} else if (equitySeriesQuality === 'fallback_only') {
+				lines.push(
+					'※ 資産推移シリーズ: 暗号資産の歴史的価格データが取得できなかったため、現在価格で全期間を代替（progression は holdings 変動のみ反映）',
+				);
+			} else if (equitySeriesQuality === 'partial_fallback') {
+				const missing = equitySeriesFallbackAssets.map((a) => a.toUpperCase()).join(', ');
+				lines.push(`※ 資産推移シリーズ: ${missing} の歴史的価格データが取得できなかったため、現在価格で代替`);
+			}
 			lines.push(
 				`月次資産推移（日次, ${monthlyEquitySeries.length}点）— グラフ「月次推移」タブ専用。年次タブでは使わない:`,
 			);
@@ -877,6 +924,8 @@ export default async function analyzeMyPortfolioHandler(args: {
 			marginFetchFailed,
 			marginStatusFetchFailed,
 			marginPositionsFetchFailed,
+			equitySeriesQuality,
+			equitySeriesFallbackAssets: equitySeriesFallbackAssets.length > 0 ? equitySeriesFallbackAssets : undefined,
 		};
 
 		return AnalyzeMyPortfolioOutputSchema.parse(ok(summary, data, meta));

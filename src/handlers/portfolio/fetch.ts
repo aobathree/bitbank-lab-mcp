@@ -346,14 +346,15 @@ export async function fetchCandlePriceData(
 ): Promise<CandlePriceData> {
 	const boundaryPrices = new Map<string, { yearStart?: number; monthStart?: number; dayStart?: number }>();
 	const dailyPrices = new Map<string, Map<number, number>>();
-	const nowJst = dayjs().tz('Asia/Tokyo');
-	const anchorDate = nowJst.format('YYYYMMDD');
 	// 年初〜当日までの 1day 足 + tz anchor 仕様に合わせた UTC 年 chunk 取得用の余裕
 	const limit = 400;
 
+	// date を明示すると `getCandles` が anchorEndMs (当日 23:59:59) を未来として弾いてしまう
+	// （anchorEndMs > Date.now() の future check）。equity series 構築では「今までの最近 limit 日」
+	// が欲しいだけなので date を渡さず内部 default（todayYyyymmdd, anchorActive=false）に委ねる。
 	const promises = pairs.map(async (pair) => {
 		try {
-			const res = await getCandles(pair, '1day', anchorDate, limit, 'Asia/Tokyo');
+			const res = await getCandles(pair, '1day', undefined, limit, 'Asia/Tokyo');
 			if (!res?.ok) return;
 
 			const normalized = res.data?.normalized;

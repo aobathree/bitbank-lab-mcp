@@ -400,6 +400,18 @@ export const AnalyzeMyPortfolioMetaSchema = z.object({
 		.describe(
 			'信用建玉一覧 (get_margin_positions) の取得に失敗した。true のとき信用建玉が summary に反映されていないため、別途 get_margin_positions を呼んで確認すること。',
 		),
+	equitySeriesQuality: z
+		.enum(['complete', 'partial_fallback', 'fallback_only', 'jpy_only'])
+		.optional()
+		.describe(
+			'monthly_equity_series / yearly_equity_series のデータ品質: complete=全保有暗号資産で daily candle 取得済（履歴正確）, partial_fallback=一部資産の歴史的価格が欠落し現在価格で代替, fallback_only=全保有暗号資産で歴史的価格が欠落し全期間現在価格で代替（progression は holdings 変動のみ反映）, jpy_only=JPY のみ保有で価格情報不要（入出金/約定のみ反映）。include_pnl=false の場合は undefined。',
+		),
+	equitySeriesFallbackAssets: z
+		.array(z.string())
+		.optional()
+		.describe(
+			'equity series 構築時に現在価格にフォールバックした資産シンボル一覧（小文字）。equitySeriesQuality が partial_fallback / fallback_only のときのみ存在。',
+		),
 });
 
 export const AnalyzeMyPortfolioOutputSchema = z.union([

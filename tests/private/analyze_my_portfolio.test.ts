@@ -7,7 +7,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { assertFail, assertOk } from '../_assertResult.js';
-import { candlesBtcJpy1day120, tickersJpy } from '../fixtures/bitbank-api.js';
+import { candlesBtcJpy1day120, generateOhlcv, tickersJpy } from '../fixtures/bitbank-api.js';
 import {
 	mockBitbankError,
 	mockBitbankSuccess,
@@ -1116,6 +1116,185 @@ describe('analyze_my_portfolio', () => {
 	});
 });
 
+describe('analyze_my_portfolio — equity series データ品質', () => {
+	/** JPY のみ保有: 暗号資産なし → equity series は JPY 残高ベースで構築される */
+	it('JPY のみ保有でも equity series が構築される (quality=jpy_only)', async () => {
+		const jpyOnlyAssets = {
+			assets: [
+				{
+					asset: 'jpy',
+					free_amount: '10560',
+					amount_precision: 0,
+					onhand_amount: '10560',
+					locked_amount: '0',
+					withdrawal_fee: '550',
+					stop_deposit: false,
+					stop_withdrawal: false,
+				},
+			],
+		};
+
+		globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
+			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			const _maybeMargin = maybeMarginAccountResponse(urlStr);
+			if (_maybeMargin) return _maybeMargin;
+			if (urlStr.includes('tickers_jpy')) {
+				return new Response(JSON.stringify(tickersJpy), { status: 200 });
+			}
+			if (urlStr.includes('/v1/user/assets')) {
+				return new Response(JSON.stringify(mockBitbankSuccess(jpyOnlyAssets)), { status: 200 });
+			}
+			if (urlStr.includes('trade_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess({ trades: [] })), { status: 200 });
+			}
+			if (urlStr.includes('deposit_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess({ deposits: [] })), { status: 200 });
+			}
+			if (urlStr.includes('withdrawal_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess({ withdrawals: [] })), { status: 200 });
+			}
+			// candlestick は呼ばれない想定（allRelevantPairs が空のため）
+			return new Response(JSON.stringify(mockBitbankSuccess({})), { status: 200 });
+		}) as unknown as typeof fetch;
+
+		const { default: handler } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const result = await handler({
+			include_technical: false,
+			include_pnl: true,
+			include_deposit_withdrawal: true,
+		});
+
+		assertOk(result);
+		expect(result.data.monthly_equity_series).toBeDefined();
+		expect(result.data.yearly_equity_series).toBeDefined();
+		expect(result.data.monthly_equity_series?.length).toBeGreaterThan(0);
+		expect(result.data.yearly_equity_series?.length).toBeGreaterThan(0);
+		expect(result.meta.equitySeriesQuality).toBe('jpy_only');
+		expect(result.summary).toContain('JPY のみ保有');
+		// 最終点は currentValueJpy = 10,560
+		const last = result.data.monthly_equity_series?.[result.data.monthly_equity_series.length - 1];
+		expect(last?.value_jpy).toBe(10560);
+	});
+
+	/** 暗号資産あり・全 candle 取得失敗 → 現在価格にフォールバック (quality=fallback_only) */
+	it('candle 取得が全失敗しても equity series が構築される (quality=fallback_only)', async () => {
+		globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
+			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			const _maybeMargin = maybeMarginAccountResponse(urlStr);
+			if (_maybeMargin) return _maybeMargin;
+			if (urlStr.includes('tickers_jpy')) {
+				return new Response(JSON.stringify(tickersJpy), { status: 200 });
+			}
+			if (urlStr.includes('candlestick')) {
+				// 全 candle fetch を失敗させる
+				return new Response(JSON.stringify(mockBitbankError(20001)), { status: 400 });
+			}
+			if (urlStr.includes('/v1/user/assets')) {
+				return new Response(JSON.stringify(mockBitbankSuccess(rawAssetsResponse)), { status: 200 });
+			}
+			if (urlStr.includes('trade_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess(rawTradeHistoryResponse)), { status: 200 });
+			}
+			if (urlStr.includes('deposit_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess({ deposits: [] })), { status: 200 });
+			}
+			if (urlStr.includes('withdrawal_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess({ withdrawals: [] })), { status: 200 });
+			}
+			return new Response(JSON.stringify(mockBitbankSuccess({})), { status: 200 });
+		}) as unknown as typeof fetch;
+
+		const { default: handler } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const result = await handler({
+			include_technical: false,
+			include_pnl: true,
+			include_deposit_withdrawal: true,
+		});
+
+		assertOk(result);
+		expect(result.data.monthly_equity_series).toBeDefined();
+		expect(result.data.monthly_equity_series?.length).toBeGreaterThan(0);
+		expect(result.meta.equitySeriesQuality).toBe('fallback_only');
+		// 全保有暗号資産が fallback の対象（btc/eth/xrp、jpy は対象外）
+		expect(result.meta.equitySeriesFallbackAssets).toEqual(expect.arrayContaining(['btc', 'eth', 'xrp']));
+		expect(result.summary).toContain('現在価格で全期間を代替');
+	});
+
+	/** 正常系: 全ペアで candle 取得済 → quality=complete */
+	it('全暗号資産で candle 取得済のとき quality=complete', async () => {
+		// 静的フィクスチャ candlesBtcJpy1day120 は 2024 年データなので、年初判定のための
+		// 「年初以降の daily candle が存在するか」を満たすために動的に最近の candle を生成する。
+		// baseTs = 今日から (count - 1) 日前 → 今日まで連続する 1day 足
+		const TODAY_MS = Date.now();
+		const ONE_DAY_MS = 86_400_000;
+		const recentCandle = (count: number) => ({
+			success: 1,
+			data: {
+				candlestick: [
+					{
+						type: '1day',
+						ohlcv: generateOhlcv(count, ONE_DAY_MS, 15_000_000, TODAY_MS - (count - 1) * ONE_DAY_MS),
+					},
+				],
+			},
+		});
+
+		globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
+			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			const _maybeMargin = maybeMarginAccountResponse(urlStr);
+			if (_maybeMargin) return _maybeMargin;
+			if (urlStr.includes('tickers_jpy')) {
+				return new Response(JSON.stringify(tickersJpy), { status: 200 });
+			}
+			if (urlStr.includes('candlestick')) {
+				return new Response(JSON.stringify(recentCandle(180)), { status: 200 });
+			}
+			if (urlStr.includes('/v1/user/assets')) {
+				return new Response(JSON.stringify(mockBitbankSuccess(rawAssetsResponse)), { status: 200 });
+			}
+			if (urlStr.includes('trade_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess(rawTradeHistoryResponse)), { status: 200 });
+			}
+			if (urlStr.includes('deposit_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess({ deposits: [] })), { status: 200 });
+			}
+			if (urlStr.includes('withdrawal_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess({ withdrawals: [] })), { status: 200 });
+			}
+			return new Response(JSON.stringify(mockBitbankSuccess({})), { status: 200 });
+		}) as unknown as typeof fetch;
+
+		const { default: handler } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const result = await handler({
+			include_technical: false,
+			include_pnl: true,
+			include_deposit_withdrawal: true,
+		});
+
+		assertOk(result);
+		expect(result.data.monthly_equity_series).toBeDefined();
+		expect(result.data.yearly_equity_series).toBeDefined();
+		expect(result.meta.equitySeriesQuality).toBe('complete');
+		expect(result.meta.equitySeriesFallbackAssets).toBeUndefined();
+	});
+
+	/** include_pnl=false のとき equitySeriesQuality は undefined */
+	it('include_pnl=false のとき equity series は構築されず quality は undefined', async () => {
+		setupFetchMock();
+		const { default: handler } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const result = await handler({
+			include_technical: false,
+			include_pnl: false,
+			include_deposit_withdrawal: false,
+		});
+
+		assertOk(result);
+		expect(result.data.monthly_equity_series).toBeUndefined();
+		expect(result.data.yearly_equity_series).toBeUndefined();
+		expect(result.meta.equitySeriesQuality).toBeUndefined();
+	});
+});
+
 describe('analyze_my_portfolio — toolDef handler', () => {
 	it('handler がデフォルト引数で動作する', async () => {
 		// setup URL routing fetch mock
@@ -1166,9 +1345,12 @@ describe('analyze_my_portfolio — toolDef handler', () => {
 		expect(jsonStart).toBeGreaterThan(0);
 		const dataInContent = JSON.parse(text.slice(jsonStart + 1)) as Record<string, unknown>;
 		expect(dataInContent).toEqual(structured.data);
-		if (Array.isArray(structured.data.monthly_equity_series) && structured.data.monthly_equity_series.length > 0) {
-			expect(text).toContain('monthly_equity_series');
-			expect(text).toContain('yearly_equity_series');
-		}
+		// include_pnl=true のとき equity series は常に content の JSON に含まれる
+		expect(Array.isArray(structured.data.monthly_equity_series)).toBe(true);
+		expect(Array.isArray(structured.data.yearly_equity_series)).toBe(true);
+		expect((structured.data.monthly_equity_series as unknown[]).length).toBeGreaterThan(0);
+		expect((structured.data.yearly_equity_series as unknown[]).length).toBeGreaterThan(0);
+		expect(text).toContain('monthly_equity_series');
+		expect(text).toContain('yearly_equity_series');
 	});
 });

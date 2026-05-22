@@ -615,6 +615,11 @@ export function calcPortfolioValue(holdings: Map<string, number>, priceMap: Map<
 /**
  * 指定日付群について保有状態を復元し、各時点の JPY 建て総資産額を算出する。
  * 最終点として現在のリアルタイム評価額を追加する。
+ *
+ * 価格解決順序: 各日付・各保有資産について、まず `dailyPrices`（1day candle open）を試み、
+ * 取得できない場合は `fallbackPrices`（現在 ticker 価格）にフォールバックする。
+ * フォールバックは JPY のみ保有 / 一部資産で candle 取得失敗時にも equity series を
+ * 構築可能にし、最終点 `currentValueJpy` との整合性を保つために重要。
  */
 export function buildEquitySeries(
 	dates: ReturnType<typeof dayjs>[],
@@ -624,6 +629,7 @@ export function buildEquitySeries(
 	dailyPrices: Map<string, Map<number, number>>,
 	currentValueJpy: number,
 	currentIso: string,
+	fallbackPrices?: Map<string, number>,
 ): EquityPoint[] {
 	const series: EquityPoint[] = [];
 
@@ -631,13 +637,19 @@ export function buildEquitySeries(
 		const dateMs = date.valueOf();
 		const holdings = reconstructHoldingsAtDate(currentHoldings, allTrades, dateMs, dwData);
 
-		// Build price map for this date from daily candle opens
+		// holdings に登場する非 JPY 資産について daily candle open を優先、無ければ現在価格にフォールバック。
+		// dailyPrices を起点に回す旧実装だと candle 全失敗時に priceMap が空になり、historical 点と
+		// 最終点 (currentValueJpy) でスケールが一致しなくなる。
 		const priceMap = new Map<string, number>();
-		for (const [asset, priceByDate] of dailyPrices) {
-			const price = priceByDate.get(dateMs);
-			if (price != null) {
-				priceMap.set(asset, price);
+		for (const asset of holdings.keys()) {
+			if (asset === 'jpy') continue;
+			const daily = dailyPrices.get(asset)?.get(dateMs);
+			if (daily != null) {
+				priceMap.set(asset, daily);
+				continue;
 			}
+			const fb = fallbackPrices?.get(asset);
+			if (fb != null) priceMap.set(asset, fb);
 		}
 
 		const value = Math.round(calcPortfolioValue(holdings, priceMap));

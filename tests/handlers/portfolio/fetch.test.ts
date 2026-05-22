@@ -981,7 +981,9 @@ describe('fetchCandlePriceData', () => {
 		const { fetchCandlePriceData } = await import('../../../src/handlers/portfolio/fetch.js');
 		const result = await fetchCandlePriceData(['btc_jpy'], yearStartMs, monthStartMs, dayStartMs);
 
-		expect(mockedGetCandles).toHaveBeenCalledWith('btc_jpy', '1day', nowJst.format('YYYYMMDD'), 400, 'Asia/Tokyo');
+		// date は渡さない（getCandles の future-check が当日 anchor を未来として弾くため）。
+		// getCandles 内部 default の todayYyyymmdd() + anchorActive=false に委ねる。
+		expect(mockedGetCandles).toHaveBeenCalledWith('btc_jpy', '1day', undefined, 400, 'Asia/Tokyo');
 
 		const boundary = result.boundaryPrices.get('btc');
 		expect(boundary?.yearStart).toBe(1_000_000);
