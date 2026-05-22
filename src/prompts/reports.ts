@@ -49,10 +49,21 @@ analyze_my_portfolio(include_pnl=true, include_technical=true, include_deposit_w
 - monthly_equity_series / yearly_equity_series / holdings_performance
 - トップに含み損・account_return・全履歴実現損益は出さない
 
+【資産推移グラフ（重要）】
+visualizer は「月次推移」「年次推移」2タブ。**同じ図・同じデータの使い回し禁止。** 2つのチャート領域を用意し、タブで表示を切り替える。
+
+| タブ | 系列データ | 増減（グラフ上） | X軸 |
+| 月次推移 | summary の「月次資産推移」= monthly_equity_series（日次・全点プロット） | monthly_performance の change_jpy / change_pct | 左「月初」→ 右「現在」 |
+| 年次推移 | summary の「年次資産推移」= yearly_equity_series（月次・全点プロット） | yearly_performance の change_jpy / change_pct | 左「年初」→ 右「現在」 |
+
+- 年次タブで「月初」ラベルや月次系列を使わない。月次タブで「年初」や年次系列を使わない
+- 点が2つでも、タブごとに **別配列の value_jpy** を折れ線にする（ラベルだけ変えない）
+- 先頭点を期初基準線、終点に「現在: ¥XX,XXX」。html モードは2グラフを縦並び（タブ不要）
+
 【セクション】
 1. ヘッダー（取得時刻・入出金分析バッジ）
 2. 現在の資産残高（大きく + JPY残高 + 前日比）
-3. 資産推移グラフ（月次/年次 SVG。visualizer はタブ切替可、html は縦並び）
+3. 資産推移グラフ（上記ルール）
 4. 保有銘柄のパフォーマンス（月次・年次騰落率）
 5. 資産構成比率（横棒、銘柄色分け）
 6. テクニカル（technical がある場合のみ）

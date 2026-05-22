@@ -616,7 +616,9 @@ export default async function analyzeMyPortfolioHandler(args: {
 			lines.push('※ 出金元本は外部フローとして除外、出金手数料はコストとして performance に含む');
 		}
 		if (monthlyEquitySeries && monthlyEquitySeries.length > 0) {
-			lines.push(`月次資産推移（日次, ${monthlyEquitySeries.length}点）:`);
+			lines.push(
+				`月次資産推移（日次, ${monthlyEquitySeries.length}点）— グラフ「月次推移」タブ専用。年次タブでは使わない:`,
+			);
 			for (let i = 0; i < monthlyEquitySeries.length; i++) {
 				const p = monthlyEquitySeries[i];
 				const label = i === monthlyEquitySeries.length - 1 ? '（現在）' : '';
@@ -624,7 +626,9 @@ export default async function analyzeMyPortfolioHandler(args: {
 			}
 		}
 		if (yearlyEquitySeries && yearlyEquitySeries.length > 0) {
-			lines.push(`年次資産推移（月次, ${yearlyEquitySeries.length}点）:`);
+			lines.push(
+				`年次資産推移（月次, ${yearlyEquitySeries.length}点）— グラフ「年次推移」タブ専用。月次タブでは使わない:`,
+			);
 			for (let i = 0; i < yearlyEquitySeries.length; i++) {
 				const p = yearlyEquitySeries[i];
 				const label = i === yearlyEquitySeries.length - 1 ? '（現在）' : '';
