@@ -243,7 +243,10 @@ export const GetCandlesInputSchema = z.object({
 		.optional()
 		.default('Asia/Tokyo')
 		.describe(
-			'表示用タイムゾーン（デフォルト: Asia/Tokyo）。各ローソク足に isoTimeLocal、keyPoints.date / priceRange.periodStart/End にもこの tz の暦日を出力。空文字も Asia/Tokyo にフォールバック。UTC が必要な場合は明示的に "UTC" を渡す。',
+			'タイムゾーン（デフォルト: Asia/Tokyo）。以下 2 つの用途を兼ねる:\n' +
+				'1. date フィルタ起点 — date=YYYYMMDD はこの tz の暦日として解釈され、その終端以前の足だけ返す（PR-3）。\n' +
+				'2. 表示 — 各ローソク足の isoTimeLocal、keyPoints.date / priceRange.periodStart/End にこの tz の暦日を出力。\n' +
+				'空文字も Asia/Tokyo にフォールバック。UTC が必要な場合は明示的に "UTC" を渡す。',
 		),
 });
 
