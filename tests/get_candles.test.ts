@@ -134,9 +134,9 @@ describe('getCandles', () => {
 		// baseTs=1704067200000 = 2024-01-01T00:00:00Z = JST 2024-01-01 09:00
 		// 100本のローソク → today index=99 → 2024-04-09T00:00:00Z = JST 2024-04-09 09:00 → '2024-04-09'
 		// 既定 tz='Asia/Tokyo' で JST 暦日として出る
-		expect(res.data.keyPoints!.today!.date).toBe('2024-04-09');
+		expect(res.data.keyPoints?.today?.date).toBe('2024-04-09');
 		// sevenDaysAgo = index 92 → 2024-04-02 → JST '2024-04-02'
-		expect(res.data.keyPoints!.sevenDaysAgo!.date).toBe('2024-04-02');
+		expect(res.data.keyPoints?.sevenDaysAgo?.date).toBe('2024-04-02');
 
 		// volumeStats should exist (>= 14 items)
 		expect(res.data.volumeStats).not.toBeNull();
@@ -842,7 +842,7 @@ describe('getCandles', () => {
 		// 1704067200000 = 2024-01-01T00:00:00Z = JST 2024-01-01 09:00
 		expect(res.data.normalized[0].isoTimeLocal).toBe('2024-01-01T09:00:00');
 		// keyPoints の date も JST 暦日
-		expect(res.data.keyPoints!.today!.date).toBe('2024-01-01');
+		expect(res.data.keyPoints?.today?.date).toBe('2024-01-01');
 	});
 
 	// ── formatDateInTz による表示層の tz 起点化（PR-2） ──
@@ -865,28 +865,28 @@ describe('getCandles', () => {
 			globalThis.fetch = buildSingleCandleMock(1759276800000) as unknown as typeof fetch;
 			const res = await getCandles('btc_jpy', '1day', '2025', 10);
 			assertOk(res);
-			expect(res.data.keyPoints!.today!.date).toBe('2025-10-01');
+			expect(res.data.keyPoints?.today?.date).toBe('2025-10-01');
 		});
 
 		it("tz='UTC': 同じ timestamp で '2025-10-01' (UTC 暦日)", async () => {
 			globalThis.fetch = buildSingleCandleMock(1759276800000) as unknown as typeof fetch;
 			const res = await getCandles('btc_jpy', '1day', '2025', 10, 'UTC');
 			assertOk(res);
-			expect(res.data.keyPoints!.today!.date).toBe('2025-10-01');
+			expect(res.data.keyPoints?.today?.date).toBe('2025-10-01');
 		});
 
 		it("tz='Asia/Tokyo': 2025-10-01T11:00:00Z (=JST 2025-10-01 20:00) → '2025-10-01'", async () => {
 			globalThis.fetch = buildSingleCandleMock(1759316400000) as unknown as typeof fetch;
 			const res = await getCandles('btc_jpy', '1day', '2025', 10);
 			assertOk(res);
-			expect(res.data.keyPoints!.today!.date).toBe('2025-10-01');
+			expect(res.data.keyPoints?.today?.date).toBe('2025-10-01');
 		});
 
 		it("tz='Asia/Tokyo': 2025-10-02T00:00:00Z (=JST 2025-10-02 09:00) → '2025-10-02'", async () => {
 			globalThis.fetch = buildSingleCandleMock(1759363200000) as unknown as typeof fetch;
 			const res = await getCandles('btc_jpy', '1day', '2025', 10);
 			assertOk(res);
-			expect(res.data.keyPoints!.today!.date).toBe('2025-10-02');
+			expect(res.data.keyPoints?.today?.date).toBe('2025-10-02');
 		});
 
 		it('JST/UTC で日付が分かれる timestamp (2025-09-30T20:00:00Z): tz により date が変わる', async () => {
@@ -895,12 +895,12 @@ describe('getCandles', () => {
 
 			const jst = await getCandles('btc_jpy', '1day', '2025', 10, 'Asia/Tokyo');
 			assertOk(jst);
-			expect(jst.data.keyPoints!.today!.date).toBe('2025-10-01');
+			expect(jst.data.keyPoints?.today?.date).toBe('2025-10-01');
 
 			globalThis.fetch = buildSingleCandleMock(ms) as unknown as typeof fetch;
 			const utc = await getCandles('btc_jpy', '1day', '2025', 10, 'UTC');
 			assertOk(utc);
-			expect(utc.data.keyPoints!.today!.date).toBe('2025-09-30');
+			expect(utc.data.keyPoints?.today?.date).toBe('2025-09-30');
 		});
 	});
 
