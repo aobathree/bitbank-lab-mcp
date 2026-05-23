@@ -23,6 +23,7 @@ import {
 	calculatePatternScoreEx,
 	checkContainment,
 	checkConvergenceEx,
+	computeTargetReach,
 	deduplicatePatterns,
 	detectWedgeBreak,
 	determineWedgeType,
@@ -433,15 +434,12 @@ function buildRegressionEntry(
 	// --- ターゲット価格計算（pattern_height 方式） ---
 	const patternHeight = Math.abs(upper.valueAt(startIdx) - lower.valueAt(startIdx));
 	let breakoutTarget: number | undefined;
-	let targetReachedPct: number | undefined;
+	let targetReach: ReturnType<typeof computeTargetReach> | undefined;
 	if (breakInfo.detected && breakoutDirection && Number.isFinite(breakInfo.breakPrice)) {
 		const bp = breakInfo.breakPrice as number;
 		breakoutTarget = breakoutDirection === 'up' ? bp + patternHeight : bp - patternHeight;
 		breakoutTarget = Math.round(breakoutTarget);
-		const currentPrice = Number(candles[candles.length - 1]?.close);
-		if (Number.isFinite(currentPrice) && Math.abs(breakoutTarget - bp) > EPSILON) {
-			targetReachedPct = Math.round(((currentPrice - bp) / (breakoutTarget - bp)) * 100);
-		}
+		targetReach = computeTargetReach(candles, breakInfo.breakIdx, bp, breakoutTarget, breakoutDirection);
 	}
 
 	// ダイアグラム用にタッチポイントから主要点を間引きして pivots を構成
@@ -529,7 +527,14 @@ function buildRegressionEntry(
 		breakoutDate: breakInfo.detected ? breakInfo.breakIsoTime : undefined,
 		breakoutBarIndex: breakInfo.detected ? breakInfo.breakIdx : undefined,
 		...(breakoutTarget !== undefined ? { breakoutTarget, targetMethod: 'pattern_height' as const } : {}),
-		...(targetReachedPct !== undefined ? { targetReachedPct } : {}),
+		...(targetReach
+			? {
+					targetReachedPct: targetReach.targetReachedPct,
+					targetReached: targetReach.targetReached,
+					...(targetReach.targetReachedDate ? { targetReachedDate: targetReach.targetReachedDate } : {}),
+					targetReachedPrice: targetReach.targetReachedPrice,
+				}
+			: {}),
 		...(aftermath ? { aftermath } : {}),
 		...(diagram ? { structureDiagram: diagram } : {}),
 	};
@@ -1050,16 +1055,13 @@ function detectFormingWedges(
 		// --- ターゲット価格計算（pattern_height 方式） ---
 		const fPatternHeight = Math.abs(upperLine.valueAt(startIdx) - lowerLine.valueAt(startIdx));
 		let fBreakoutTarget: number | undefined;
-		let fTargetReachedPct: number | undefined;
+		let fTargetReach: ReturnType<typeof computeTargetReach> | undefined;
 		if (breakoutDirection && breakoutIdx !== -1) {
 			const bp = Number(candles[breakoutIdx]?.close);
 			if (Number.isFinite(bp)) {
 				fBreakoutTarget = breakoutDirection === 'up' ? bp + fPatternHeight : bp - fPatternHeight;
 				fBreakoutTarget = Math.round(fBreakoutTarget);
-				const curPrice = Number(candles[candles.length - 1]?.close);
-				if (Number.isFinite(curPrice) && Math.abs(fBreakoutTarget - bp) > EPSILON) {
-					fTargetReachedPct = Math.round(((curPrice - bp) / (fBreakoutTarget - bp)) * 100);
-				}
+				fTargetReach = computeTargetReach(candles, breakoutIdx, bp, fBreakoutTarget, breakoutDirection);
 			}
 		}
 
@@ -1076,7 +1078,14 @@ function detectFormingWedges(
 			...(fBreakoutTarget !== undefined
 				? { breakoutTarget: fBreakoutTarget, targetMethod: 'pattern_height' as const }
 				: {}),
-			...(fTargetReachedPct !== undefined ? { targetReachedPct: fTargetReachedPct } : {}),
+			...(fTargetReach
+				? {
+						targetReachedPct: fTargetReach.targetReachedPct,
+						targetReached: fTargetReach.targetReached,
+						...(fTargetReach.targetReachedDate ? { targetReachedDate: fTargetReach.targetReachedDate } : {}),
+						targetReachedPrice: fTargetReach.targetReachedPrice,
+					}
+				: {}),
 			_method: 'forming_relaxed',
 		};
 		patterns.push(entry);

@@ -379,4 +379,38 @@ describe('detectTriangles — whipsaw boundary tests', () => {
 			seen.add(key);
 		}
 	});
+
+	// ────────────────────────────────────────────────────────
+	// 6. target 到達判定（high/low ベース）
+	// ────────────────────────────────────────────────────────
+
+	it('triangle: 上方ブレイク後に high が target を超える → targetReached=true, pct>=100', () => {
+		// 後続足の high を target 以上に設定して到達ケースを作る
+		const candles = buildWithBreakoutAndTail([118, 119, 200, 121]);
+		const ctx = buildCtx({ candles, want: new Set(['triangle_symmetrical']) });
+		const result = detectTriangles(ctx);
+
+		const completed = result.patterns.filter((p) => p.type === 'triangle_symmetrical' && p.status === 'completed');
+		expect(completed.length).toBeGreaterThanOrEqual(1);
+		const p = completed[0];
+		expect(p?.breakoutTarget).toBeDefined();
+		expect(p?.targetReached).toBe(true);
+		expect(p?.targetReachedPct).toBeGreaterThanOrEqual(100);
+		expect(p?.targetReachedPrice).toBeDefined();
+		expect(p?.targetReachedDate).toBeDefined();
+	});
+
+	it('triangle: ブレイク後に high が target に届かない → targetReached=false, pct<100', () => {
+		// breakoutClose=120, patternHeight≈30 → target=150。後続足 high<=123 で必ず未到達
+		const candles = buildWithBreakoutAndTail([118, 119, 120, 121]);
+		const ctx = buildCtx({ candles, want: new Set(['triangle_symmetrical']) });
+		const result = detectTriangles(ctx);
+
+		const completed = result.patterns.filter((p) => p.type === 'triangle_symmetrical' && p.status === 'completed');
+		expect(completed.length).toBeGreaterThanOrEqual(1);
+		const unreached = completed.find((p) => p.targetReached === false);
+		expect(unreached).toBeDefined();
+		expect(unreached?.targetReachedPct).toBeLessThan(100);
+		expect(unreached?.targetReachedPrice).toBeDefined();
+	});
 });

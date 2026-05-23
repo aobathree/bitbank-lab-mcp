@@ -260,6 +260,73 @@ describe('detectWedges', () => {
 		}
 	});
 
+	// ── target 到達判定（high/low ベース）────────────────────
+
+	// ── target 到達判定（high/low ベース）────────────────────
+	//
+	// 標準の buildFallingWedgeCandles は breakout を起こさない near_completion で終わるため、
+	// 末尾に強い上抜けバーを付加した専用フィクスチャを使う。
+
+	function buildFallingWedgeWithUpBreakout(): CandleData[] {
+		const candles: CandleData[] = [];
+		const total = 90;
+		for (let i = 0; i < 80; i++) {
+			const upper = 200 - 0.5 * i;
+			const lower = 180 - 0.25 * i;
+			const mid = (upper + lower) / 2;
+			const period = i % 8;
+			let h: number;
+			let l: number;
+			let c: number;
+			if (period === 0 || period === 1) {
+				h = upper;
+				l = mid - 2;
+				c = mid + 1;
+			} else if (period === 4 || period === 5) {
+				h = mid + 2;
+				l = lower;
+				c = mid - 1;
+			} else {
+				h = mid + 3;
+				l = mid - 3;
+				c = mid;
+			}
+			candles.push(mkCandle(total - i, mid, h, l, c));
+		}
+		// 末尾 10 本で upper(@79)=160.5 を大きく上回るブレイク
+		for (let i = 80; i < total; i++) {
+			candles.push(mkCandle(total - i, 165, 200, 162, 180));
+		}
+		return candles;
+	}
+
+	it('falling_wedge ブレイク検出時に target 到達情報が一式付与される（high/low ベース）', () => {
+		const candles = buildFallingWedgeWithUpBreakout();
+		const ctx = buildCtx({ candles, pivots: [], includeForming: true });
+		const result = detectWedges(ctx);
+
+		const withTarget = result.patterns.filter((p) => p.type === 'falling_wedge' && p.breakoutTarget !== undefined);
+		expect(withTarget.length).toBeGreaterThan(0);
+		for (const p of withTarget) {
+			expect(typeof p.targetReached).toBe('boolean');
+			expect(typeof p.targetReachedPct).toBe('number');
+			expect(typeof p.targetReachedPrice).toBe('number');
+			expect(p.targetReachedPct).toBeGreaterThanOrEqual(0);
+			expect(p.targetReachedDate).toBeDefined();
+		}
+	});
+
+	it('falling_wedge: 到達済み → targetReached=true & pct>=100（クランプ確認）', () => {
+		const candles = buildFallingWedgeWithUpBreakout();
+		const ctx = buildCtx({ candles, pivots: [], includeForming: true });
+		const result = detectWedges(ctx);
+
+		const reached = result.patterns.find((p) => p.type === 'falling_wedge' && p.targetReached === true);
+		expect(reached).toBeDefined();
+		expect(reached?.targetReachedPct).toBeGreaterThanOrEqual(100);
+		expect(reached?.breakoutDirection).toBe('up');
+	});
+
 	// ── デバッグ候補の検証 ───────────────────────────────────
 
 	it('検出試行後 debugCandidates に情報が記録される', () => {

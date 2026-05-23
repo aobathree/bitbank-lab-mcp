@@ -15,7 +15,7 @@
  * 8. deduplicatePatterns() before returning
  */
 
-import { barsPerDay, calcATR, deduplicatePatterns, finalizeConf } from './helpers.js';
+import { barsPerDay, calcATR, computeTargetReach, deduplicatePatterns, finalizeConf } from './helpers.js';
 import { clamp01 } from './regression.js';
 import type { CandDebugEntry, DetectContext, DetectResult, PatternEntry } from './types.js';
 
@@ -414,7 +414,6 @@ function buildTriangleResult(c: TriangleCandidateCtx): { pattern: PatternEntry; 
 		breakoutIdx,
 		breakoutDirection,
 		resultEndIdx,
-		lastIdx,
 		wantPennant,
 		tf,
 	} = c;
@@ -482,7 +481,7 @@ function buildTriangleResult(c: TriangleCandidateCtx): { pattern: PatternEntry; 
 	// --- ターゲット価格計算 ---
 	const patternHeight = gapStart;
 	let breakoutTarget: number | undefined;
-	let targetReachedPct: number | undefined;
+	let targetReach: ReturnType<typeof computeTargetReach> | undefined;
 	let targetMethod: 'flagpole_projection' | 'pattern_height' | undefined;
 	if (hasBreakout && breakoutDirection) {
 		const bp = candles[breakoutIdx].close;
@@ -494,10 +493,7 @@ function buildTriangleResult(c: TriangleCandidateCtx): { pattern: PatternEntry; 
 			targetMethod = 'pattern_height';
 		}
 		breakoutTarget = Math.round(breakoutTarget);
-		const curPrice = Number(candles[lastIdx]?.close);
-		if (Number.isFinite(curPrice) && Math.abs(breakoutTarget - bp) > 1e-12) {
-			targetReachedPct = Math.round(((curPrice - bp) / (breakoutTarget - bp)) * 100);
-		}
+		targetReach = computeTargetReach(candles, breakoutIdx, bp, breakoutTarget, breakoutDirection);
 	}
 
 	// --- 用語正規化ラベル ---
@@ -532,7 +528,14 @@ function buildTriangleResult(c: TriangleCandidateCtx): { pattern: PatternEntry; 
 			: undefined,
 		breakoutBarIndex: hasBreakout ? breakoutIdx : undefined,
 		...(breakoutTarget !== undefined ? { breakoutTarget, targetMethod } : {}),
-		...(targetReachedPct !== undefined ? { targetReachedPct } : {}),
+		...(targetReach
+			? {
+					targetReachedPct: targetReach.targetReachedPct,
+					targetReached: targetReach.targetReached,
+					...(targetReach.targetReachedDate ? { targetReachedDate: targetReach.targetReachedDate } : {}),
+					targetReachedPrice: targetReach.targetReachedPrice,
+				}
+			: {}),
 		...(poleDirection
 			? {
 					poleDirection,

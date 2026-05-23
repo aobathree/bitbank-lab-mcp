@@ -14,7 +14,7 @@
  * 7. Apply deduplicatePatterns() before returning
  */
 
-import { barsPerDay, calcATR, deduplicatePatterns, finalizeConf } from './helpers.js';
+import { barsPerDay, calcATR, computeTargetReach, deduplicatePatterns, finalizeConf } from './helpers.js';
 import { clamp01 } from './regression.js';
 import type { DetectContext, DetectResult, PatternEntry } from './types.js';
 
@@ -297,15 +297,12 @@ export function detectPennantsFlags(ctx: DetectContext): DetectResult {
 
 		// --- ターゲット価格計算（flagpole_projection 方式） ---
 		let breakoutTarget: number | undefined;
-		let targetReachedPct: number | undefined;
+		let targetReach: ReturnType<typeof computeTargetReach> | undefined;
 		if (hasBreakout && breakoutDirection) {
 			const bp = candles[breakoutIdx].close;
 			breakoutTarget = breakoutDirection === 'up' ? bp + poleRange : bp - poleRange;
 			breakoutTarget = Math.round(breakoutTarget);
-			const curPrice = Number(candles[lastIdx]?.close);
-			if (Number.isFinite(curPrice) && Math.abs(breakoutTarget - bp) > 1e-12) {
-				targetReachedPct = Math.round(((curPrice - bp) / (breakoutTarget - bp)) * 100);
-			}
+			targetReach = computeTargetReach(candles, breakoutIdx, bp, breakoutTarget, breakoutDirection);
 		}
 
 		patterns.push({
@@ -319,7 +316,14 @@ export function detectPennantsFlags(ctx: DetectContext): DetectResult {
 			outcome,
 			breakoutBarIndex: hasBreakout ? breakoutIdx : undefined,
 			...(breakoutTarget !== undefined ? { breakoutTarget, targetMethod: 'flagpole_projection' as const } : {}),
-			...(targetReachedPct !== undefined ? { targetReachedPct } : {}),
+			...(targetReach
+				? {
+						targetReachedPct: targetReach.targetReachedPct,
+						targetReached: targetReach.targetReached,
+						...(targetReach.targetReachedDate ? { targetReachedDate: targetReach.targetReachedDate } : {}),
+						targetReachedPrice: targetReach.targetReachedPrice,
+					}
+				: {}),
 		});
 
 		debugCandidates.push({

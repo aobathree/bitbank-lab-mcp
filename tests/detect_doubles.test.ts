@@ -536,20 +536,143 @@ describe('detectDoubles', () => {
 		expect(forming.confirmation?.type).toBe('not_confirmed');
 	});
 
-	// ── targetReachedPct ─────────────────────────────────
+	// ── targetReachedPct / targetReached (high/low ベース) ───
 
-	it('breakout 後に target 方向に動いた場合 targetReachedPct を算出', () => {
-		// target=140, breakoutPrice=160, currentPrice=150 → (150-160)/(140-160)*100 = 50%
+	it('double_top: breakout 後に low が target 方向に動いた場合 high/low ベースで pct を算出', () => {
+		// target=140, breakoutPrice=160, postBreak low=150 → (160-150)/(160-140)*100 = 50%
 		const { candles, pivots } = buildDoubleTop({ peak1: 200, valley: 170, peak2: 200, breakoutClose: 160 });
-		// 最後の candle の close を 150 に設定（target=140 方向に半分進行）
-		candles[candles.length - 1] = { ...candles[candles.length - 1], close: 150 };
+		// 最後の candle の low を 150 に設定（target=140 方向に半分進行）
+		const last = candles.length - 1;
+		candles[last] = { ...candles[last], low: 150 };
 
 		const ctx = buildCtx({ candles, pivots });
 		const result = detectDoubles(ctx);
 		const dt = result.patterns.find((p) => p.type === 'double_top');
 
-		if (dt?.targetReachedPct !== undefined) {
-			expect(dt.targetReachedPct).toBe(50);
-		}
+		expect(dt).toBeDefined();
+		if (!dt) return;
+		expect(dt.targetReachedPct).toBe(50);
+		expect(dt.targetReached).toBe(false);
+		expect(dt.targetReachedPrice).toBe(150);
+		expect(dt.targetReachedDate).toBe(candles[last].isoTime);
+	});
+
+	it('double_top: 一度 target 到達後に close が戻る → high/low ベースで targetReached=true', () => {
+		// target=140, breakoutPrice=160
+		// 中間 idx=27 で low=130 (<= target 140) → 到達
+		// 末尾 idx=29 は close=160 まで recovery
+		const { candles, pivots } = buildDoubleTop({ peak1: 200, valley: 170, peak2: 200, breakoutClose: 160 });
+		// 中間 idx=27 で low=130 (target=140 を割り込む)
+		candles[27] = { ...candles[27], low: 130 };
+
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectDoubles(ctx);
+		const dt = result.patterns.find((p) => p.type === 'double_top');
+
+		expect(dt).toBeDefined();
+		if (!dt) return;
+		expect(dt.breakoutTarget).toBe(140);
+		expect(dt.targetReachedPct).toBeGreaterThanOrEqual(100);
+		expect(dt.targetReached).toBe(true);
+		expect(dt.targetReachedPrice).toBe(130);
+		expect(dt.targetReachedDate).toBe(candles[27].isoTime);
+	});
+
+	it('double_top: ブレイク close が既に target を下回る（オーバーシュート）→ targetReached=true & pct>=100', () => {
+		// target=140, breakClose=130 → breakoutPrice=130 < target 140
+		// 旧式: (extremePrice - 130) / (140 - 130) は分母 +10、extremePrice<130 で分子マイナス → pct<0
+		// 新式: clamp により reached=true なら pct>=100
+		const { candles, pivots } = buildDoubleTop({ peak1: 200, valley: 170, peak2: 200, breakoutClose: 130 });
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectDoubles(ctx);
+		const dt = result.patterns.find((p) => p.type === 'double_top');
+
+		expect(dt).toBeDefined();
+		if (!dt) return;
+		expect(dt.breakoutTarget).toBe(140);
+		expect(dt.targetReached).toBe(true);
+		expect(dt.targetReachedPct).toBeGreaterThanOrEqual(100);
+		expect(dt.targetReachedPct).toBeGreaterThanOrEqual(0);
+	});
+
+	it('double_top: ブレイク close == target（距離ゼロ）→ targetReached=true & pct=100', () => {
+		// target=140, breakClose=140 → breakoutPrice == target → targetDistance=0
+		const { candles, pivots } = buildDoubleTop({ peak1: 200, valley: 170, peak2: 200, breakoutClose: 140 });
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectDoubles(ctx);
+		const dt = result.patterns.find((p) => p.type === 'double_top');
+
+		expect(dt).toBeDefined();
+		if (!dt) return;
+		expect(dt.breakoutTarget).toBe(140);
+		expect(dt.targetReached).toBe(true);
+		expect(dt.targetReachedPct).toBe(100);
+		expect(dt.targetReachedPrice).toBe(140);
+		expect(dt.targetReachedDate).toBeDefined();
+	});
+
+	it('double_bottom: 一度 target 到達後に close が戻る → high/low ベースで targetReached=true', () => {
+		// target=160, breakoutPrice=140
+		// 中間 idx=27 で high=170 (>= target 160) → 到達
+		// 末尾 idx=29 は close=140 まで recovery
+		const { candles, pivots } = buildDoubleBottom({ valley1: 100, peak: 130, valley2: 100, breakoutClose: 140 });
+		candles[27] = { ...candles[27], high: 170 };
+
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectDoubles(ctx);
+		const db = result.patterns.find((p) => p.type === 'double_bottom');
+
+		expect(db).toBeDefined();
+		if (!db) return;
+		expect(db.breakoutTarget).toBe(160);
+		expect(db.targetReachedPct).toBeGreaterThanOrEqual(100);
+		expect(db.targetReached).toBe(true);
+		expect(db.targetReachedPrice).toBe(170);
+		expect(db.targetReachedDate).toBe(candles[27].isoTime);
+	});
+
+	it('double_bottom: ブレイク high が target に届かない → 未到達 (targetReachedPct < 100)', () => {
+		// breakoutPrice=140, target=160, 全 postBreak high < 160 → 未到達
+		const { candles, pivots } = buildDoubleBottom({ valley1: 100, peak: 130, valley2: 100, breakoutClose: 140 });
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectDoubles(ctx);
+		const db = result.patterns.find((p) => p.type === 'double_bottom');
+
+		expect(db).toBeDefined();
+		if (!db) return;
+		expect(db.breakoutTarget).toBe(160);
+		expect(db.targetReachedPct).toBeLessThan(100);
+		expect(db.targetReached).toBe(false);
+	});
+
+	it('double_bottom: ブレイク close が既に target を上回る（オーバーシュート）→ targetReached=true & pct>=100', () => {
+		// target=160, breakClose=170 → breakoutPrice=170 > target 160 で既に到達済み
+		const { candles, pivots } = buildDoubleBottom({ valley1: 100, peak: 130, valley2: 100, breakoutClose: 170 });
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectDoubles(ctx);
+		const db = result.patterns.find((p) => p.type === 'double_bottom');
+
+		expect(db).toBeDefined();
+		if (!db) return;
+		expect(db.breakoutTarget).toBe(160);
+		expect(db.targetReached).toBe(true);
+		expect(db.targetReachedPct).toBeGreaterThanOrEqual(100);
+		expect(db.targetReachedPct).toBeGreaterThanOrEqual(0);
+	});
+
+	it('double_bottom: ブレイク close == target（距離ゼロ）→ targetReached=true & pct=100', () => {
+		// target=160, breakClose=160
+		const { candles, pivots } = buildDoubleBottom({ valley1: 100, peak: 130, valley2: 100, breakoutClose: 160 });
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectDoubles(ctx);
+		const db = result.patterns.find((p) => p.type === 'double_bottom');
+
+		expect(db).toBeDefined();
+		if (!db) return;
+		expect(db.breakoutTarget).toBe(160);
+		expect(db.targetReached).toBe(true);
+		expect(db.targetReachedPct).toBe(100);
+		expect(db.targetReachedPrice).toBe(160);
+		expect(db.targetReachedDate).toBeDefined();
 	});
 });

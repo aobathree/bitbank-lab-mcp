@@ -8,6 +8,7 @@ import {
 	calculatePatternScoreEx,
 	checkContainment,
 	checkConvergenceEx,
+	computeTargetReach,
 	daysPerBar,
 	deduplicatePatterns,
 	detectWedgeBreak,
@@ -480,5 +481,171 @@ describe('daysPerBar', () => {
 		expect(4 * daysPerBar('1week')).toBe(28);
 		// 1month × 3 bars = 90 days
 		expect(3 * daysPerBar('1month')).toBe(90);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// computeTargetReach — ブレイク後の target 到達判定（high/low ベース）
+// ---------------------------------------------------------------------------
+describe('computeTargetReach', () => {
+	// candle factory: high / low を明示指定可能
+	function c(high: number, low: number, close: number, iso?: string): CandleData {
+		return { open: close, high, low, close, isoTime: iso ?? `2026-01-01T00:00:00.000Z` };
+	}
+
+	// direction='down' ─────────────────────────────────────
+
+	it('direction=down: 最安 low が target を割り込む → reached=true, pct>=100', () => {
+		// breakoutPrice=100, target=80, idx=2 で low=70 (<= target) → 到達
+		const candles = [
+			c(105, 95, 100, 'iso-0'),
+			c(105, 90, 100, 'iso-1'),
+			c(95, 70, 90, 'iso-2'),
+			c(100, 85, 95, 'iso-3'),
+		];
+		const r = computeTargetReach(candles, 0, 100, 80, 'down');
+		expect(r).toBeDefined();
+		expect(r?.targetReached).toBe(true);
+		expect(r?.targetReachedPct).toBeGreaterThanOrEqual(100);
+		expect(r?.targetReachedPrice).toBe(70);
+		expect(r?.targetReachedDate).toBe('iso-2');
+	});
+
+	it('direction=down: 一度到達後に close が戻っても最安 low ベースで到達扱い', () => {
+		// breakoutPrice=100, target=80, idx=1 で low=75（到達） / idx=3 で close=100 へ戻し
+		const candles = [
+			c(102, 99, 100, 'iso-0'),
+			c(95, 75, 90, 'iso-1'),
+			c(110, 92, 105, 'iso-2'),
+			c(115, 99, 110, 'iso-3'),
+		];
+		const r = computeTargetReach(candles, 0, 100, 80, 'down');
+		expect(r?.targetReached).toBe(true);
+		expect(r?.targetReachedPrice).toBe(75);
+		expect(r?.targetReachedDate).toBe('iso-1');
+	});
+
+	it('direction=down: ブレイク close が既に target を下回る（オーバーシュート）→ reached=true & pct>=100', () => {
+		// breakoutPrice=70, target=80 → 既に到達済み
+		const candles = [c(72, 65, 70, 'iso-0'), c(75, 60, 70, 'iso-1')];
+		const r = computeTargetReach(candles, 0, 70, 80, 'down');
+		expect(r?.targetReached).toBe(true);
+		expect(r?.targetReachedPct).toBeGreaterThanOrEqual(100);
+		expect(r?.targetReachedPct).toBeGreaterThanOrEqual(0);
+	});
+
+	it('direction=down: low が target に届かない → reached=false, pct<100', () => {
+		// breakoutPrice=100, target=50, 最安 low=90 → moveDistance=10, distance=50, pct=20
+		const candles = [c(102, 100, 100, 'iso-0'), c(101, 90, 99, 'iso-1')];
+		const r = computeTargetReach(candles, 0, 100, 50, 'down');
+		expect(r?.targetReached).toBe(false);
+		expect(r?.targetReachedPct).toBe(20);
+		expect(r?.targetReachedPrice).toBe(90);
+	});
+
+	// direction='up' ───────────────────────────────────────
+
+	it('direction=up: 最高 high が target を超える → reached=true, pct>=100', () => {
+		// breakoutPrice=100, target=120, idx=2 で high=130 (>= target) → 到達
+		const candles = [c(102, 98, 100, 'iso-0'), c(110, 100, 108, 'iso-1'), c(130, 115, 125, 'iso-2')];
+		const r = computeTargetReach(candles, 0, 100, 120, 'up');
+		expect(r?.targetReached).toBe(true);
+		expect(r?.targetReachedPct).toBeGreaterThanOrEqual(100);
+		expect(r?.targetReachedPrice).toBe(130);
+		expect(r?.targetReachedDate).toBe('iso-2');
+	});
+
+	it('direction=up: 一度到達後に close が戻っても最高 high ベースで到達扱い', () => {
+		// breakoutPrice=100, target=120, idx=1 で high=125（到達） / idx=2 で close=100 へ戻し
+		const candles = [c(101, 99, 100, 'iso-0'), c(125, 100, 122, 'iso-1'), c(105, 95, 100, 'iso-2')];
+		const r = computeTargetReach(candles, 0, 100, 120, 'up');
+		expect(r?.targetReached).toBe(true);
+		expect(r?.targetReachedPrice).toBe(125);
+		expect(r?.targetReachedDate).toBe('iso-1');
+	});
+
+	it('direction=up: ブレイク close が既に target を超える（オーバーシュート）→ reached=true & pct>=100', () => {
+		// breakoutPrice=130, target=120 → 既に到達済み
+		const candles = [c(135, 125, 130, 'iso-0'), c(140, 128, 135, 'iso-1')];
+		const r = computeTargetReach(candles, 0, 130, 120, 'up');
+		expect(r?.targetReached).toBe(true);
+		expect(r?.targetReachedPct).toBeGreaterThanOrEqual(100);
+		expect(r?.targetReachedPct).toBeGreaterThanOrEqual(0);
+	});
+
+	it('direction=up: high が target に届かない → reached=false, pct<100', () => {
+		// breakoutPrice=100, target=150, 最高 high=110 → moveDistance=10, distance=50, pct=20
+		const candles = [c(105, 98, 100, 'iso-0'), c(110, 100, 108, 'iso-1')];
+		const r = computeTargetReach(candles, 0, 100, 150, 'up');
+		expect(r?.targetReached).toBe(false);
+		expect(r?.targetReachedPct).toBe(20);
+		expect(r?.targetReachedPrice).toBe(110);
+	});
+
+	// 0 距離 ───────────────────────────────────────────────
+
+	it('0 距離（breakoutPrice == target）→ reached=true, pct=100, price=breakoutPrice', () => {
+		const candles = [c(102, 98, 100, 'iso-0'), c(105, 95, 100, 'iso-1')];
+		const r = computeTargetReach(candles, 0, 100, 100, 'down');
+		expect(r?.targetReached).toBe(true);
+		expect(r?.targetReachedPct).toBe(100);
+		expect(r?.targetReachedPrice).toBe(100);
+		expect(r?.targetReachedDate).toBe('iso-0');
+	});
+
+	it('0 距離（direction=up）→ reached=true, pct=100, price=breakoutPrice', () => {
+		const candles = [c(102, 98, 100, 'iso-0'), c(105, 95, 100, 'iso-1')];
+		const r = computeTargetReach(candles, 0, 100, 100, 'up');
+		expect(r?.targetReached).toBe(true);
+		expect(r?.targetReachedPct).toBe(100);
+		expect(r?.targetReachedPrice).toBe(100);
+		expect(r?.targetReachedDate).toBe('iso-0');
+	});
+
+	// 入力不正 ─────────────────────────────────────────────
+
+	it('breakoutPrice が NaN → undefined を返す', () => {
+		const candles = [c(102, 98, 100, 'iso-0')];
+		expect(computeTargetReach(candles, 0, Number.NaN, 80, 'down')).toBeUndefined();
+	});
+
+	it('target が NaN → undefined を返す', () => {
+		const candles = [c(102, 98, 100, 'iso-0')];
+		expect(computeTargetReach(candles, 0, 100, Number.NaN, 'down')).toBeUndefined();
+	});
+
+	it('breakoutIdx が candles.length 以上 → undefined を返す', () => {
+		const candles = [c(102, 98, 100, 'iso-0')];
+		expect(computeTargetReach(candles, 5, 100, 80, 'down')).toBeUndefined();
+	});
+
+	it('breakoutIdx が負 → Math.max(0, ...) で 0 から走査', () => {
+		const candles = [c(95, 70, 90, 'iso-0'), c(100, 80, 95, 'iso-1')];
+		const r = computeTargetReach(candles, -1, 100, 80, 'down');
+		expect(r?.targetReached).toBe(true);
+		expect(r?.targetReachedPrice).toBe(70);
+	});
+
+	// 丸めの非対称性（reached=false なら 100 に丸めない） ───
+
+	it('reached=false で raw pct が 99.x → 99 にキャップ（100 にせり上がらない）', () => {
+		// breakoutPrice=100, target=0, extremeLow=0.4
+		// targetReached = 0.4 <= 0 → false
+		// rawPct = (100 - 0.4) / 100 * 100 = 99.6
+		// 旧: Math.round(99.6)=100（reached=false なのに pct=100）
+		// 新: Math.min(99, Math.floor(99.6))=99
+		const candles = [c(101, 0.4, 100, 'iso-0')];
+		const r = computeTargetReach(candles, 0, 100, 0, 'down');
+		expect(r?.targetReached).toBe(false);
+		expect(r?.targetReachedPct).toBe(99);
+	});
+
+	it('reached=true なら通常通り round（オーバーシュート/到達の区別を維持）', () => {
+		// breakoutPrice=100, target=80, extremeLow=80（ちょうど到達）
+		// rawPct = 20/20 * 100 = 100 → reached=true & pct=100
+		const candles = [c(95, 80, 90, 'iso-0')];
+		const r = computeTargetReach(candles, 0, 100, 80, 'down');
+		expect(r?.targetReached).toBe(true);
+		expect(r?.targetReachedPct).toBe(100);
 	});
 });

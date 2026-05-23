@@ -7,6 +7,7 @@
 
 import { dayjs } from '../../lib/datetime.js';
 import { trueRange } from '../../lib/indicators.js';
+import { EPSILON } from '../../lib/math.js';
 import type {
 	CandleData,
 	DeduplicablePattern,
@@ -76,6 +77,106 @@ export function barsPerDay(tf: string): number {
  */
 export function daysPerBar(tf: string): number {
 	return 1 / barsPerDay(tf);
+}
+
+// ---------------------------------------------------------------------------
+// ブレイク後の target 到達判定（high/low ベース）
+//
+// 最終 close ベースだと、ブレイク後に一度 target を越えてから戻ったケースで
+// 未到達扱いされてしまう。実際には「ブレイク後に target を越えたか」を見たいので、
+// breakoutIdx 以降のローソク足を走査して extremum
+// （下方ブレイクなら min low / 上方ブレイクなら max high）を取り、その値で進捗率を計算する。
+//
+// 入力:
+//   - candles: 全ローソク足
+//   - breakoutIdx: ブレイク確定足のインデックス（このバー以降を走査）
+//   - breakoutPrice: ブレイク確定時の参照価格（通常は close）
+//   - target: 想定ターゲット価格
+//   - direction: 'up'  → breakoutIdx 以降の最高 high で評価
+//                'down' → breakoutIdx 以降の最安 low で評価
+//
+// 戻り値:
+//   - 0 距離（breakoutPrice == target）の場合: reached=true, pct=100, price=breakoutPrice
+//   - 到達済みなら pct を最低 100 にクランプ（オーバーシュート時の符号反転防止）
+//   - extremum が見つからない / 入力不正なら undefined
+// ---------------------------------------------------------------------------
+
+export interface TargetReachInfo {
+	targetReachedPct: number;
+	targetReached: boolean;
+	targetReachedDate?: string;
+	targetReachedPrice: number;
+}
+
+export function computeTargetReach(
+	candles: readonly CandleData[],
+	breakoutIdx: number,
+	breakoutPrice: number,
+	target: number,
+	direction: 'up' | 'down',
+): TargetReachInfo | undefined {
+	if (!Number.isFinite(breakoutPrice) || !Number.isFinite(target)) return undefined;
+	const targetDistance = Math.abs(target - breakoutPrice);
+	const startIdx = Math.max(0, breakoutIdx);
+	if (startIdx >= candles.length) return undefined;
+
+	// ブレイク時点で target と一致（距離ゼロ）= 既に到達。
+	// undefined を返すと targetReached / targetReachedPrice 等の metadata が落ちるため
+	// reached=true, pct=100 を確定で返す。
+	if (targetDistance <= EPSILON) {
+		const targetReachedDate = candles[startIdx]?.isoTime;
+		return {
+			targetReachedPct: 100,
+			targetReached: true,
+			...(targetReachedDate ? { targetReachedDate } : {}),
+			targetReachedPrice: breakoutPrice,
+		};
+	}
+
+	let extremePrice = direction === 'down' ? Number.POSITIVE_INFINITY : Number.NEGATIVE_INFINITY;
+	let extremeIdx = -1;
+	for (let i = startIdx; i < candles.length; i++) {
+		const candle = candles[i];
+		if (!candle) continue;
+		if (direction === 'down') {
+			const lo = Number(candle.low ?? NaN);
+			if (!Number.isFinite(lo)) continue;
+			if (lo < extremePrice) {
+				extremePrice = lo;
+				extremeIdx = i;
+			}
+		} else {
+			const hi = Number(candle.high ?? NaN);
+			if (!Number.isFinite(hi)) continue;
+			if (hi > extremePrice) {
+				extremePrice = hi;
+				extremeIdx = i;
+			}
+		}
+	}
+	if (extremeIdx < 0 || !Number.isFinite(extremePrice)) return undefined;
+
+	const targetReached = direction === 'down' ? extremePrice <= target : extremePrice >= target;
+	// pct はブレイク価格から target 方向へどれだけ進んだかを 100% スケールで返す。
+	// 分母を Math.abs にしておくことで、ブレイク足が既に target を越えていた場合の
+	// 符号反転（reached=true なのに pct<0）を防ぐ。
+	//
+	// 丸めは reached/unreached で非対称にする:
+	//   - reached=true:  round して max(100, ..) にクランプ（オーバーシュート時の符号反転防止）
+	//   - reached=false: floor して 99 にキャップ（99.6% などが 100 に丸まって
+	//     下流の `pct >= 100` 判定を誤らせるのを防ぐ）
+	const moveDistance = direction === 'down' ? breakoutPrice - extremePrice : extremePrice - breakoutPrice;
+	const rawPct = (moveDistance / targetDistance) * 100;
+	const targetReachedPct = targetReached
+		? Math.max(100, Math.round(rawPct))
+		: Math.min(99, Math.max(0, Math.floor(rawPct)));
+	const targetReachedDate = candles[extremeIdx]?.isoTime;
+	return {
+		targetReachedPct,
+		targetReached,
+		...(targetReachedDate ? { targetReachedDate } : {}),
+		targetReachedPrice: extremePrice,
+	};
 }
 
 // ---------------------------------------------------------------------------

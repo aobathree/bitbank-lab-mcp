@@ -175,4 +175,50 @@ describe('detectPennantsFlags — scanStart 修正の境界テスト（PR3）', 
 		const result = detectPennantsFlags(ctx);
 		expect(result.patterns).toHaveLength(0);
 	});
+
+	// ────────────────────────────────────────────────────────
+	// 5. target 到達判定（high/low ベース）
+	// ────────────────────────────────────────────────────────
+
+	it('flag: breakout 検出時に targetReached / targetReachedPct / targetReachedPrice が整合', () => {
+		const candles = closesToCandles(buildBullFlagCloses());
+		const ctx = buildCtx({ candles, want: new Set(['flag']), includeForming: true });
+		const result = detectPennantsFlags(ctx);
+
+		const completed = result.patterns.filter((p) => p.type === 'flag' && p.breakoutBarIndex !== undefined);
+		expect(completed.length).toBeGreaterThan(0);
+		for (const p of completed) {
+			expect(typeof p.targetReached).toBe('boolean');
+			expect(typeof p.targetReachedPct).toBe('number');
+			expect(typeof p.targetReachedPrice).toBe('number');
+			if (p.targetReached === true) {
+				expect(p.targetReachedPct).toBeGreaterThanOrEqual(100);
+			} else {
+				expect(p.targetReachedPct).toBeLessThan(100);
+			}
+		}
+	});
+
+	it('flag: 下方ブレイク後に low が target を下回る → targetReached=true (high/low ベース)', () => {
+		// 標準フィクスチャは bull flag（poleUp=true）に対する下方ブレイクなので
+		// 期待方向と逆 = status='invalid' / outcome='failure' になる。
+		// target reach 計算自体は breakoutDirection に従って実行されるので、
+		// status を問わず breakoutDirection='down' のパターンで low=0 が到達扱いされることを確認する。
+		const closes = buildBullFlagCloses();
+		const candles = closesToCandles(closes);
+		// 末尾の low を 0 にして必ず target 到達となる極端ケース
+		const last = candles.length - 1;
+		candles[last] = { ...candles[last], low: 0 };
+
+		const ctx = buildCtx({ candles, want: new Set(['flag']), includeForming: true });
+		const result = detectPennantsFlags(ctx);
+
+		const downBreakouts = result.patterns.filter((p) => p.type === 'flag' && p.breakoutDirection === 'down');
+		expect(downBreakouts.length).toBeGreaterThan(0);
+		for (const p of downBreakouts) {
+			expect(p.targetReached).toBe(true);
+			expect(p.targetReachedPct).toBeGreaterThanOrEqual(100);
+			expect(p.targetReachedPrice).toBe(0);
+		}
+	});
 });
