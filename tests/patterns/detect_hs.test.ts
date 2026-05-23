@@ -861,6 +861,28 @@ describe('detectHeadAndShoulders', () => {
 		expect(hs.targetReached).toBe(false);
 	});
 
+	it('H&S: ブレイク close が既に target を下回る（オーバーシュート）→ targetReached=true & pct>=100', () => {
+		// target = 40, breakClose=30 → breakoutPrice=30 < target 40 で既に到達済み
+		// 旧式: (extremePrice - 30) / (40 - 30) は分母 +10、extremePrice<30 で分子マイナス → pct が負
+		// 新式: targetDistance=Math.abs(40-30)=10, moveDistance=30-27=3, pct=30
+		//       targetReached=true なので Math.max(100, 30) = 100 にクランプ
+		const { candles, pivots } = buildHsWithBreakout({ breakIdx: 65, breakClose: 30 });
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectHeadAndShoulders(ctx);
+
+		const hs = result.patterns.find((p) => p.type === 'head_and_shoulders');
+		expect(hs).toBeDefined();
+		if (!hs) return;
+
+		expect(hs.status).toBe('completed');
+		expect(hs.confirmation?.type).toBe('neckline_breakout');
+		expect(hs.breakoutTarget).toBe(40);
+		expect(hs.targetReached).toBe(true);
+		expect(hs.targetReachedPct).toBeGreaterThanOrEqual(100);
+		// 不整合（reached=true なのに pct<0）が起きていないことを明示
+		expect(hs.targetReachedPct).toBeGreaterThanOrEqual(0);
+	});
+
 	it('H&S: 右肩後にブレイクしない → status=near_completion, confirmation=not_confirmed', () => {
 		// 既定 buildHS の末尾は close=90 で neckline 85 を割り込まない（90 > 83.725）
 		const { candles, pivots } = buildHS();
@@ -982,6 +1004,27 @@ describe('detectHeadAndShoulders', () => {
 		expect(ihs.breakoutTarget).toBe(160);
 		expect(ihs.targetReachedPct).toBeLessThan(100);
 		expect(ihs.targetReached).toBe(false);
+	});
+
+	it('逆H&S: ブレイク close が既に target を上回る（オーバーシュート）→ targetReached=true & pct>=100', () => {
+		// target = 160, breakClose=170 → breakoutPrice=170 > target 160 で既に到達済み
+		// 旧式: (extremePrice - 170) / (160 - 170) は分母 -10、extremePrice>170 で分子プラス → pct が負
+		// 新式: targetDistance=Math.abs(160-170)=10, moveDistance=173-170=3, pct=30
+		//       targetReached=true なので Math.max(100, 30) = 100 にクランプ
+		const { candles, pivots } = buildInverseHsWithBreakout({ breakIdx: 65, breakClose: 170 });
+		const ctx = buildCtx({ candles, pivots });
+		const result = detectHeadAndShoulders(ctx);
+
+		const ihs = result.patterns.find((p) => p.type === 'inverse_head_and_shoulders');
+		expect(ihs).toBeDefined();
+		if (!ihs) return;
+
+		expect(ihs.status).toBe('completed');
+		expect(ihs.confirmation?.type).toBe('neckline_breakout');
+		expect(ihs.breakoutTarget).toBe(160);
+		expect(ihs.targetReached).toBe(true);
+		expect(ihs.targetReachedPct).toBeGreaterThanOrEqual(100);
+		expect(ihs.targetReachedPct).toBeGreaterThanOrEqual(0);
 	});
 
 	it('逆H&S: 右肩後にブレイクしない → status=near_completion, confirmation=not_confirmed', () => {

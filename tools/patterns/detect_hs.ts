@@ -126,7 +126,8 @@ function computeHsTargetReach(
 	direction: 'down' | 'up',
 ): HsTargetReachInfo | undefined {
 	if (!Number.isFinite(breakoutPrice) || !Number.isFinite(target)) return undefined;
-	if (Math.abs(target - breakoutPrice) < EPSILON) return undefined;
+	const targetDistance = Math.abs(target - breakoutPrice);
+	if (targetDistance <= EPSILON) return undefined;
 	const startIdx = Math.max(0, breakoutIdx);
 	if (startIdx >= candles.length) return undefined;
 
@@ -153,8 +154,14 @@ function computeHsTargetReach(
 	}
 	if (extremeIdx < 0 || !Number.isFinite(extremePrice)) return undefined;
 
-	const targetReachedPct = Math.round(((extremePrice - breakoutPrice) / (target - breakoutPrice)) * 100);
 	const targetReached = direction === 'down' ? extremePrice <= target : extremePrice >= target;
+	// pct は「ブレイク価格から target に向かってどれだけ進んだか」を 100% スケールで返す。
+	// 分母を Math.abs にして方向を明示することで、ブレイク足が深く動いて breakoutPrice が
+	// 既に target を越えていた場合の符号反転（targetReached=true なのに pct<0）を防ぐ。
+	const moveDistance = direction === 'down' ? breakoutPrice - extremePrice : extremePrice - breakoutPrice;
+	let targetReachedPct = Math.round((moveDistance / targetDistance) * 100);
+	if (targetReached) targetReachedPct = Math.max(100, targetReachedPct);
+	targetReachedPct = Math.max(0, targetReachedPct);
 	const targetReachedDate = candles[extremeIdx]?.isoTime;
 	return {
 		targetReachedPct,
