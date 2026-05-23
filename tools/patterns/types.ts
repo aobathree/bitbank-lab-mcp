@@ -185,6 +185,9 @@ export interface PatternEntry extends DeduplicablePattern {
 	breakoutTarget?: number;
 	targetMethod?: string;
 	targetReachedPct?: number;
+	targetReached?: boolean;
+	targetReachedDate?: string;
+	targetReachedPrice?: number;
 	trendlineLabel?: string;
 	poleDirection?: 'up' | 'down';
 	priorTrendDirection?: 'bullish' | 'bearish';
