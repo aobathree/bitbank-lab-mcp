@@ -394,19 +394,25 @@ export default async function analyzeMyPortfolioHandler(args: {
 			);
 
 			// equity series のデータ品質を判定。LLM が現在価格代替に気づけるよう summary / meta に明示する。
-			// 判定基準: 「年初以降の daily candle が1件でもあるか」= 当年内の historical price が辿れるか。
-			// `dp.size > 0` だけだと、古い fixture や stale candle が混じったときに「complete」を誤判定する。
+			// 判定基準: buildEquitySeries が実際に lookup する日付キー（monthDates + yearDates）が
+			// すべて dailyPrices に揃っているか。1件でも欠ければその資産は fallback 対象とする。
+			// 「年初以降の任意の1件でも OK」とすると sparse coverage でも complete 判定になり、
+			// progression が fallback で埋まっている実態と乖離する。
 			const cryptoAssetsInPortfolio = nonZeroAssets.filter((a) => a.asset !== 'jpy').map((a) => a.asset);
 			if (cryptoAssetsInPortfolio.length === 0) {
 				equitySeriesQuality = 'jpy_only';
 			} else {
-				equitySeriesFallbackAssets = cryptoAssetsInPortfolio.filter((a) => {
-					const dp = candlePriceData.dailyPrices.get(a);
-					if (!dp || dp.size === 0) return true;
-					for (const ts of dp.keys()) {
-						if (ts >= boundaries.yearStartMs) return false;
+				const requiredDateKeys = new Set<number>([
+					...monthDates.map((d) => d.valueOf()),
+					...yearDates.map((d) => d.valueOf()),
+				]);
+				equitySeriesFallbackAssets = cryptoAssetsInPortfolio.filter((asset) => {
+					const dp = candlePriceData.dailyPrices.get(asset);
+					if (!dp) return true;
+					for (const ts of requiredDateKeys) {
+						if (!dp.has(ts)) return true;
 					}
-					return true;
+					return false;
 				});
 				if (equitySeriesFallbackAssets.length === 0) {
 					equitySeriesQuality = 'complete';

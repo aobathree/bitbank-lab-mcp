@@ -1278,6 +1278,73 @@ describe('analyze_my_portfolio — equity series データ品質', () => {
 		expect(result.meta.equitySeriesFallbackAssets).toBeUndefined();
 	});
 
+	/** 一部だけ candle 成功 → 残りは fallback (quality=partial_fallback) */
+	it('一部の暗号資産でだけ candle 取得済のとき quality=partial_fallback', async () => {
+		// btc は最近の candle データを返し、eth / xrp は error を返す混在モック。
+		// equity series 構築側の lookup 日付（monthDates + yearDates）すべてが btc に揃うよう、
+		// 年初〜今日までを連続で生成する。
+		const TODAY_MS = Date.now();
+		const ONE_DAY_MS = 86_400_000;
+		// 年初から今日までを十分カバーする日数（例: 400 日）。
+		const recentBtcCandle = {
+			success: 1,
+			data: {
+				candlestick: [
+					{
+						type: '1day',
+						ohlcv: generateOhlcv(400, ONE_DAY_MS, 15_000_000, TODAY_MS - 399 * ONE_DAY_MS),
+					},
+				],
+			},
+		};
+
+		globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL | Request) => {
+			const urlStr = typeof url === 'string' ? url : url instanceof URL ? url.href : url.url;
+			const _maybeMargin = maybeMarginAccountResponse(urlStr);
+			if (_maybeMargin) return _maybeMargin;
+			if (urlStr.includes('tickers_jpy')) {
+				return new Response(JSON.stringify(tickersJpy), { status: 200 });
+			}
+			if (urlStr.includes('candlestick')) {
+				// URL pattern: https://public.bitbank.cc/{pair}/candlestick/1day/{date}
+				// btc_jpy のみ成功、それ以外は upstream error
+				if (urlStr.includes('btc_jpy')) {
+					return new Response(JSON.stringify(recentBtcCandle), { status: 200 });
+				}
+				return new Response(JSON.stringify(mockBitbankError(20001)), { status: 400 });
+			}
+			if (urlStr.includes('/v1/user/assets')) {
+				return new Response(JSON.stringify(mockBitbankSuccess(rawAssetsResponse)), { status: 200 });
+			}
+			if (urlStr.includes('trade_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess(rawTradeHistoryResponse)), { status: 200 });
+			}
+			if (urlStr.includes('deposit_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess({ deposits: [] })), { status: 200 });
+			}
+			if (urlStr.includes('withdrawal_history')) {
+				return new Response(JSON.stringify(mockBitbankSuccess({ withdrawals: [] })), { status: 200 });
+			}
+			return new Response(JSON.stringify(mockBitbankSuccess({})), { status: 200 });
+		}) as unknown as typeof fetch;
+
+		const { default: handler } = await import('../../src/handlers/analyzeMyPortfolioHandler.js');
+		const result = await handler({
+			include_technical: false,
+			include_pnl: true,
+			include_deposit_withdrawal: true,
+		});
+
+		assertOk(result);
+		expect(result.data.monthly_equity_series).toBeDefined();
+		expect(result.data.monthly_equity_series?.length).toBeGreaterThan(0);
+		expect(result.meta.equitySeriesQuality).toBe('partial_fallback');
+		// btc は揃っているので fallback 対象外、eth / xrp は対象
+		expect(result.meta.equitySeriesFallbackAssets).toEqual(expect.arrayContaining(['eth', 'xrp']));
+		expect(result.meta.equitySeriesFallbackAssets).not.toContain('btc');
+		expect(result.summary).toContain('歴史的価格データが取得できなかったため、現在価格で代替');
+	});
+
 	/** include_pnl=false のとき equitySeriesQuality は undefined */
 	it('include_pnl=false のとき equity series は構築されず quality は undefined', async () => {
 		setupFetchMock();
