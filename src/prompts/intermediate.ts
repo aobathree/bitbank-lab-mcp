@@ -101,7 +101,10 @@ export const intermediatePrompts: PromptDef[] = [
 - スパイク（あれば）
 - 価格との連動状況
 
-${DISCLAIMER_MARKET}`),
+---
+⚠️ 免責事項：この分析は参考情報であり、解釈には誤差が含まれる場合があります。
+市況は刻々と変動するため、実際のトレード前には最新状況を再確認してください。
+投資判断はご自身の責任でお願いします。`),
 		metadata: {
 			level: PromptLevel.INTERMEDIATE,
 			category: PromptCategory.ANALYSIS,
