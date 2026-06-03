@@ -51,7 +51,14 @@ export const RunBacktestInputSchema = z
 			'Backtest end date (ISO 8601: YYYY-MM-DD). Takes precedence over period when both start_date and end_date are provided.',
 		),
 		strategy: StrategyConfigSchema.describe('Strategy configuration'),
-		fee_bp: z.number().min(0).max(100).optional().default(12).describe('One-way fee in basis points'),
+		fee_bp: z
+			.number()
+			.min(0)
+			.max(100)
+			.optional()
+			.describe(
+				'One-way fee in basis points. When omitted, resolved dynamically from the current /spot/pairs taker rate (falls back to nominal 12 bp if unavailable). Explicit values are always respected.',
+			),
 		execution: z.literal('t+1_open').optional().default('t+1_open').describe('Execution timing (fixed: t+1_open)'),
 		outputDir: z.string().optional().default('/mnt/user-data/outputs').describe('Output directory for chart files'),
 		savePng: z

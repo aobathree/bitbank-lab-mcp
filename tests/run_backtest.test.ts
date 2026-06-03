@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc.js';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 dayjs.extend(utc);
 
@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 	renderBacktestChartGeneric: vi.fn(),
 	svgToPng: vi.fn(),
 	generateBacktestChartFilename: vi.fn(),
+	resolveBacktestFeeBp: vi.fn(),
 }));
 
 vi.mock('../tools/trading_process/index.js', () => ({
@@ -27,6 +28,10 @@ vi.mock('../tools/trading_process/lib/fetch_candles.js', () => ({
 
 vi.mock('../tools/trading_process/lib/backtest_engine.js', () => ({
 	runBacktestEngine: mocks.runBacktestEngine,
+}));
+
+vi.mock('../tools/trading_process/lib/resolve_fee.js', () => ({
+	resolveBacktestFeeBp: mocks.resolveBacktestFeeBp,
 }));
 
 vi.mock('../tools/trading_process/lib/strategies/index.js', () => ({
@@ -109,6 +114,11 @@ function buildEngineResult() {
 }
 
 describe('run_backtest', () => {
+	beforeEach(() => {
+		// 既定は dynamic 12bp。fee 解決を要する個別テストで上書きする。
+		mocks.resolveBacktestFeeBp.mockResolvedValue({ fee_bp: 12, source: 'dynamic' });
+	});
+
 	afterEach(() => {
 		vi.clearAllMocks();
 	});
@@ -509,5 +519,110 @@ describe('run_backtest', () => {
 		expect(mocks.runBacktestEngine).toHaveBeenCalledTimes(1);
 		const engineInput = mocks.runBacktestEngine.mock.calls[0][2];
 		expect(engineInput.strategy.params).toEqual({ short: 5, long: 25 });
+	});
+
+	// -------------------------------------------------------------------------
+	// 手数料の動的解決（taker レート由来）
+	// -------------------------------------------------------------------------
+	function setupRsiStrategy() {
+		mocks.getStrategy.mockReturnValue({
+			name: 'RSI',
+			type: 'rsi',
+			requiredBars: 14,
+			defaultParams: { period: 14, overbought: 70, oversold: 30 },
+			computeRequiredBars: () => 14,
+			validate: makeValidateOk({ period: 14, overbought: 70, oversold: 30 }),
+		});
+		mocks.fetchCandlesForBacktest.mockResolvedValue(buildCandles(90));
+		mocks.runBacktestEngine.mockReturnValue(buildEngineResult());
+	}
+
+	it('fee_bp 明示指定はそのまま使われ、resolveBacktestFeeBp に override として渡る', async () => {
+		setupRsiStrategy();
+		mocks.resolveBacktestFeeBp.mockResolvedValue({ fee_bp: 25, source: 'explicit' });
+
+		const res = await runBacktest({
+			pair: 'btc_jpy',
+			strategy: { type: 'rsi', params: {} },
+			fee_bp: 25,
+			savePng: false,
+			includeSvg: false,
+		});
+
+		assertOk(res);
+		// override が resolveBacktestFeeBp に渡る
+		expect(mocks.resolveBacktestFeeBp).toHaveBeenCalledWith('btc_jpy', 25);
+		// engine には解決後の fee_bp が渡る（既存と同一 fee_bp → 数値不変の前提）
+		const engineInput = mocks.runBacktestEngine.mock.calls[0][2];
+		expect(engineInput.fee_bp).toBe(25);
+		// summary に明示指定であることが表示される
+		expect(res.summary).toContain('Fee: 25 bp (round-trip: 50 bp)');
+		expect(res.summary).toContain('explicit: 明示指定');
+	});
+
+	it('fee_bp 未指定なら resolveBacktestFeeBp に undefined を渡し、dynamic レートが engine に渡る', async () => {
+		setupRsiStrategy();
+		mocks.resolveBacktestFeeBp.mockResolvedValue({ fee_bp: 10, source: 'dynamic' });
+
+		const res = await runBacktest({
+			pair: 'eth_jpy',
+			strategy: { type: 'rsi', params: {} },
+			savePng: false,
+			includeSvg: false,
+		});
+
+		assertOk(res);
+		expect(mocks.resolveBacktestFeeBp).toHaveBeenCalledWith('eth_jpy', undefined);
+		const engineInput = mocks.runBacktestEngine.mock.calls[0][2];
+		expect(engineInput.fee_bp).toBe(10);
+		expect(res.summary).toContain('Fee: 10 bp (round-trip: 20 bp)');
+		expect(res.summary).toContain('dynamic: /spot/pairs taker レート由来');
+		// ハルシネーション防止の近似注記
+		expect(res.summary).toContain('現在の /spot/pairs taker レート由来');
+		expect(res.summary).toContain('現在レートでの近似');
+	});
+
+	it('pairs 取得失敗時は fallback 12bp ＋ warning が content 先頭付近に出る', async () => {
+		setupRsiStrategy();
+		mocks.resolveBacktestFeeBp.mockResolvedValue({
+			fee_bp: 12,
+			source: 'fallback',
+			warning: '手数料: /spot/pairs 取得失敗のため公称 12 bp で概算します: fetch failed',
+		});
+
+		const res = await runBacktest({
+			pair: 'btc_jpy',
+			strategy: { type: 'rsi', params: {} },
+			savePng: false,
+			includeSvg: false,
+		});
+
+		assertOk(res);
+		// warning は summary 先頭付近（タイトル行より前）に ⚠️ 付きで出る
+		const titleIdx = res.summary.indexOf('=== RSI Backtest Result ===');
+		const warnIdx = res.summary.indexOf('⚠️');
+		expect(warnIdx).toBeGreaterThanOrEqual(0);
+		expect(warnIdx).toBeLessThan(titleIdx);
+		expect(res.summary).toContain('取得失敗');
+		expect(res.summary).toContain('fallback: 公称 12bp 概算');
+		const engineInput = mocks.runBacktestEngine.mock.calls[0][2];
+		expect(engineInput.fee_bp).toBe(12);
+	});
+
+	it('回帰: 同一 fee_bp 入力なら engine に渡る fee_bp は従来通り（数値再現性）', async () => {
+		setupRsiStrategy();
+		mocks.resolveBacktestFeeBp.mockResolvedValue({ fee_bp: 12, source: 'explicit' });
+
+		await runBacktest({
+			pair: 'btc_jpy',
+			strategy: { type: 'rsi', params: {} },
+			fee_bp: 12,
+			savePng: false,
+			includeSvg: false,
+		});
+
+		const engineInput = mocks.runBacktestEngine.mock.calls[0][2];
+		// 旧実装の固定 12bp と同じ値が engine に渡る → 損益計算は不変
+		expect(engineInput.fee_bp).toBe(12);
 	});
 });

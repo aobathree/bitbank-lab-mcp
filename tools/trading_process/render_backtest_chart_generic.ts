@@ -82,6 +82,8 @@ export interface GenericBacktestChartData {
 		strategyName: string;
 		strategyParams: Record<string, number>;
 		fee_bp: number;
+		/** 手数料の由来（explicit=明示指定 / dynamic=/spot/pairs taker / fallback=公称概算）。 */
+		fee_source?: 'explicit' | 'dynamic' | 'fallback';
 	};
 	summary: BacktestEngineSummary;
 }

@@ -7,8 +7,10 @@
 import { existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { dayjs, formatDateInTz } from '../../lib/datetime.js';
+import { prependWarnings } from '../../lib/warning-propagation.js';
 import { type BacktestEngineInput, type BacktestEngineResult, runBacktestEngine } from './lib/backtest_engine.js';
 import { fetchCandlesForBacktest } from './lib/fetch_candles.js';
+import { type FeeSource, resolveBacktestFeeBp } from './lib/resolve_fee.js';
 import { getAvailableStrategies, getStrategy, type StrategyConfig, type StrategyType } from './lib/strategies/index.js';
 import { generateBacktestChartFilename, svgToPng } from './lib/svg_to_png.js';
 import {
@@ -88,7 +90,7 @@ export default async function runBacktest(input: RunBacktestInput): Promise<RunB
 			start_date,
 			end_date,
 			strategy: strategyConfig,
-			fee_bp = 12,
+			fee_bp,
 			execution = 't+1_open',
 			outputDir = DEFAULT_OUTPUT_DIR,
 			savePng = false, // ファイルシステム非共有のためデフォルトoff
@@ -126,8 +128,12 @@ export default async function runBacktest(input: RunBacktestInput): Promise<RunB
 				? { type: 'absolute', start: start_date, end: end_date }
 				: { type: 'period', value: period };
 
-		// ローソク足を取得
-		const candles = await fetchCandlesForBacktest(pair, timeframe, range, requiredBars);
+		// ローソク足の取得と手数料の解決を並行実行（fee 解決は失敗してもフォールバックで止まらない）。
+		// fee_bp 明示指定時は override 最優先、未指定時のみ /spot/pairs の taker レートから解決する。
+		const [candles, resolvedFee] = await Promise.all([
+			fetchCandlesForBacktest(pair, timeframe, range, requiredBars),
+			resolveBacktestFeeBp(pair, fee_bp),
+		]);
 
 		if (candles.length < requiredBars + 10) {
 			return {
@@ -142,7 +148,7 @@ export default async function runBacktest(input: RunBacktestInput): Promise<RunB
 			timeframe,
 			period,
 			strategy: { type: strategyConfig.type, params },
-			fee_bp,
+			fee_bp: resolvedFee.fee_bp,
 			execution,
 			effective_start: candles[0].time,
 			effective_end: candles[candles.length - 1].time,
@@ -159,7 +165,8 @@ export default async function runBacktest(input: RunBacktestInput): Promise<RunB
 			period,
 			strategyName: strategy.name,
 			strategyParams: params,
-			fee_bp,
+			fee_bp: resolvedFee.fee_bp,
+			fee_source: resolvedFee.source,
 		};
 
 		// チャート描画（savePng または includeSvg が有効な場合のみ）
@@ -178,7 +185,7 @@ export default async function runBacktest(input: RunBacktestInput): Promise<RunB
 		}
 
 		// サマリーテキスト生成
-		const summaryText = result
+		const summaryBody = result
 			? generateSummaryText(
 					{
 						candles,
@@ -192,6 +199,12 @@ export default async function runBacktest(input: RunBacktestInput): Promise<RunB
 					chartDetail,
 				)
 			: '';
+
+		// フォールバック時は warning を content / summary 先頭に伝播する
+		// （.claude/rules/tools.md の warning-propagation ルールに準拠）。
+		const summaryText = prependWarnings(summaryBody, resolvedFee.warning ? { warning: resolvedFee.warning } : null, {
+			separator: '\n\n',
+		});
 
 		// 結果を構築
 		const output: RunBacktestOutput = {
@@ -260,6 +273,23 @@ function sampleCurve<T>(curve: T[], maxPoints: number): T[] {
 	return result;
 }
 
+/** bp 値を表示用に丸める（小数の桁あふれを抑え、末尾ゼロを落とす）。 */
+function roundBp(bp: number): number {
+	return Number(bp.toFixed(2));
+}
+
+/** 手数料の由来ラベル（summary 表示用）。 */
+function feeSourceLabel(source: FeeSource | undefined): string {
+	switch (source) {
+		case 'dynamic':
+			return 'dynamic: /spot/pairs taker レート由来';
+		case 'fallback':
+			return 'fallback: 公称 12bp 概算（pairs 取得失敗）';
+		default:
+			return 'explicit: 明示指定';
+	}
+}
+
 /**
  * サマリーテキストを生成
  */
@@ -272,7 +302,14 @@ function generateSummaryText(data: GenericBacktestChartData, chartDetail: ChartD
 	lines.push(`Period: ${input.period} (${input.timeframe})`);
 	lines.push(`Strategy: ${input.strategyName}`);
 	lines.push(`Parameters: ${JSON.stringify(input.strategyParams)}`);
-	lines.push(`Fee: ${input.fee_bp} bp (round-trip: ${input.fee_bp * 2} bp)`);
+	// 手数料の表示（由来を併記）。小数 bp は末尾ゼロを落として表示する。
+	const feeBp = roundBp(input.fee_bp);
+	const sourceLabel = feeSourceLabel(input.fee_source);
+	lines.push(`Fee: ${feeBp} bp (round-trip: ${roundBp(input.fee_bp * 2)} bp) [${sourceLabel}]`);
+	// ハルシネーション防止: 動的解決時は「現在レートでの近似」を明記する。
+	if (input.fee_source === 'dynamic') {
+		lines.push('※ 手数料は現在の /spot/pairs taker レート由来。ヒストリカル区間も現在レートでの近似です。');
+	}
 	lines.push('');
 	lines.push(`--- Period ---`);
 	const fetchedStart = isoDateForDisplay(candles[0]?.time);

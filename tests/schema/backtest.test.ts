@@ -55,7 +55,8 @@ describe('RunBacktestInputSchema', () => {
 		expect(result.pair).toBe('btc_jpy');
 		expect(result.timeframe).toBe('1D');
 		expect(result.period).toBe('3M');
-		expect(result.fee_bp).toBe(12);
+		// fee_bp 省略時は undefined（実行時に /spot/pairs の taker レートから動的解決される）
+		expect(result.fee_bp).toBeUndefined();
 		expect(result.execution).toBe('t+1_open');
 		expect(result.savePng).toBe(false);
 		expect(result.includeSvg).toBe(false);
