@@ -561,10 +561,10 @@ const MarginPositionSchema = z.object({
 
 const MarginNoticeSchema = z
 	.object({
-		what: z.string().describe('追証・不足金の種別'),
-		occurred_at: z.number().describe('発生日時（unix ms）'),
-		amount: z.string().describe('追証・不足金額'),
-		due_date_at: z.number().describe('期日（unix ms）'),
+		what: z.string().nullable().describe('追証・不足金の種別（イベント無しは null）'),
+		occurred_at: z.number().nullable().describe('発生日時（unix ms、無しは null）'),
+		amount: z.string().nullable().describe('追証・不足金額（無しは null）'),
+		due_date_at: z.number().nullable().describe('期日（unix ms、無しは null）'),
 	})
 	.nullable();
 

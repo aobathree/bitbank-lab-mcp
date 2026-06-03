@@ -16,10 +16,10 @@ import type { ToolDefinition } from '../../src/tool-definition.js';
 /** bitbank /v1/user/margin/positions のレスポンス型 */
 interface RawMarginPositionsResponse {
 	notice: {
-		what: string;
-		occurred_at: number;
-		amount: string;
-		due_date_at: number;
+		what: string | null;
+		occurred_at: number | null;
+		amount: string | null;
+		due_date_at: number | null;
 	} | null;
 	payables: {
 		amount: string;
@@ -57,7 +57,7 @@ export default async function getMarginPositions(args: { pair?: string }) {
 		// ペアでフィルタ（API がフィルタ非対応の場合のクライアント側フィルタ）
 		const positions = pair ? raw.positions.filter((p) => p.pair === pair) : raw.positions;
 
-		const hasNotice = raw.notice !== null;
+		const hasNotice = raw.notice != null && raw.notice.what != null;
 		const hasPayables = (toNum(raw.payables.amount) ?? 0) > 0;
 
 		// サマリー文字列の生成
@@ -67,8 +67,9 @@ export default async function getMarginPositions(args: { pair?: string }) {
 
 		if (hasNotice && raw.notice) {
 			const n = raw.notice;
-			const dueDate = toIsoMs(n.due_date_at) ?? String(n.due_date_at);
-			lines.push(`⚠ ${n.what}: ${formatPrice(Number(n.amount))} 円（期日: ${dueDate}）`);
+			const dueDate = n.due_date_at != null ? (toIsoMs(n.due_date_at) ?? String(n.due_date_at)) : '—';
+			const amountText = n.amount != null ? `${formatPrice(Number(n.amount))} 円` : '—';
+			lines.push(`⚠ ${n.what}: ${amountText}（期日: ${dueDate}）`);
 		}
 		if (hasPayables) {
 			lines.push(`⚠ 不足金: ${formatPrice(toNum(raw.payables.amount))} 円`);

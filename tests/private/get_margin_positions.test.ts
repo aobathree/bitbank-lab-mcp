@@ -219,6 +219,57 @@ describe('get_margin_positions', () => {
 		expect(firstLine.startsWith('⚠')).toBe(false);
 	});
 
+	it('notice が全 null オブジェクト（NORMAL 口座）でも ok:true で建玉を返し、偽 ⚠ を出さない', async () => {
+		// 実 API は追証等が無い NORMAL 状態でも notice を null ではなく全 null オブジェクトで返す。
+		const allNullNotice = {
+			...rawMarginPositionsResponse,
+			notice: { what: null, occurred_at: null, amount: null, due_date_at: null },
+		};
+		setupFetchMock(mockBitbankSuccess(allNullNotice));
+
+		const { default: getMarginPositions } = await import('../../tools/private/get_margin_positions.js');
+		const result = await getMarginPositions({});
+
+		assertOk(result);
+		expect(result.data.positions).toHaveLength(2);
+		expect(result.meta.hasNotice).toBe(false);
+		expect(result.summary).not.toContain('⚠');
+		expect(result.summary.split('\n')[0]).toContain('信用建玉一覧');
+	});
+
+	it('notice にイベントあり（一部フィールドのみ非 null）でも ⚠ 行を出す', async () => {
+		const partialNotice = {
+			...rawMarginPositionsResponse,
+			notice: { what: '追証', occurred_at: null, amount: '100000', due_date_at: null },
+		};
+		setupFetchMock(mockBitbankSuccess(partialNotice));
+
+		const { default: getMarginPositions } = await import('../../tools/private/get_margin_positions.js');
+		const result = await getMarginPositions({});
+
+		assertOk(result);
+		expect(result.meta.hasNotice).toBe(true);
+		const firstLine = result.summary.split('\n')[0];
+		expect(firstLine.startsWith('⚠')).toBe(true);
+		expect(firstLine).toContain('追証');
+		expect(firstLine).toContain('100,000');
+		// due_date_at が null のときは「—」で描画される
+		expect(firstLine).toContain('期日: —');
+	});
+
+	it('notice: null（後方互換）でも ok:true で建玉を返す', async () => {
+		const nullNotice = { ...rawMarginPositionsResponse, notice: null };
+		setupFetchMock(mockBitbankSuccess(nullNotice));
+
+		const { default: getMarginPositions } = await import('../../tools/private/get_margin_positions.js');
+		const result = await getMarginPositions({});
+
+		assertOk(result);
+		expect(result.data.positions).toHaveLength(2);
+		expect(result.meta.hasNotice).toBe(false);
+		expect(result.summary).not.toContain('⚠');
+	});
+
 	it('建玉の評価額・平均取得価格をサマリーに含む', async () => {
 		setupFetchMock(mockBitbankSuccess(rawMarginPositionsResponse));
 

@@ -226,7 +226,7 @@ export const rawMarginStatusResponse = {
 // ── 信用建玉 ──
 
 export const rawMarginPositionsResponse = {
-	notice: null,
+	notice: { what: null, occurred_at: null, amount: null, due_date_at: null },
 	payables: { amount: '0' },
 	positions: [
 		{
