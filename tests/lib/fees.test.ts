@@ -250,7 +250,44 @@ describe('estimateOrderFee', () => {
 		expect(est.rate).toBe(0.0008);
 	});
 
-	it('信用フィールドが null なら fallback', () => {
+	it('信用 open（buy + long）: open taker レートを解決する', () => {
+		const est = estimateOrderFee(makeSpec({ margin_open_taker_fee_rate_quote: '0.0009' }), {
+			type: 'market',
+			side: 'buy',
+			amount: '0.01',
+			positionSide: 'long',
+		});
+		expect(est.role).toBe('taker');
+		expect(est.rate).toBe(0.0009);
+	});
+
+	it('信用 4 経路で open/close 判定が正しい（taker レート）', () => {
+		const spec = makeSpec({
+			margin_open_taker_fee_rate_quote: '0.0001',
+			margin_close_taker_fee_rate_quote: '0.0002',
+		});
+		const base = { type: 'market' as const, amount: '0.01' };
+		// 新規建て(open): buy+long / sell+short
+		expect(estimateOrderFee(spec, { ...base, side: 'buy', positionSide: 'long' }).rate).toBe(0.0001);
+		expect(estimateOrderFee(spec, { ...base, side: 'sell', positionSide: 'short' }).rate).toBe(0.0001);
+		// 決済(close): sell+long / buy+short
+		expect(estimateOrderFee(spec, { ...base, side: 'sell', positionSide: 'long' }).rate).toBe(0.0002);
+		expect(estimateOrderFee(spec, { ...base, side: 'buy', positionSide: 'short' }).rate).toBe(0.0002);
+	});
+
+	it('信用 4 経路で open/close 判定が正しい（maker レート / 指値）', () => {
+		const spec = makeSpec({
+			margin_open_maker_fee_rate_quote: '0.0003',
+			margin_close_maker_fee_rate_quote: '0.0004',
+		});
+		const base = { type: 'limit' as const, price: '15000000', amount: '0.01' };
+		expect(estimateOrderFee(spec, { ...base, side: 'buy', positionSide: 'long' }).rate).toBe(0.0003);
+		expect(estimateOrderFee(spec, { ...base, side: 'sell', positionSide: 'short' }).rate).toBe(0.0003);
+		expect(estimateOrderFee(spec, { ...base, side: 'sell', positionSide: 'long' }).rate).toBe(0.0004);
+		expect(estimateOrderFee(spec, { ...base, side: 'buy', positionSide: 'short' }).rate).toBe(0.0004);
+	});
+
+	it('信用フィールドが null なら fallback 概算しつつ「API 未提供」note を付ける', () => {
 		const est = estimateOrderFee(makeSpec(), {
 			type: 'market',
 			side: 'buy',
@@ -258,6 +295,32 @@ describe('estimateOrderFee', () => {
 			positionSide: 'long',
 		});
 		expect(est.rate).toBe(DEFAULT_TAKER_FALLBACK);
+		expect(est.note).toContain('API 未提供');
+	});
+
+	it('信用見積りには利息（interest）を含めない旨の note を必ず付ける', () => {
+		// レートが揃っていても利息 note は出る（現物レートとの混同防止）。
+		const est = estimateOrderFee(makeSpec({ margin_open_maker_fee_rate_quote: '0.0003' }), {
+			type: 'limit',
+			side: 'buy',
+			price: '15000000',
+			amount: '0.01',
+			positionSide: 'long',
+		});
+		expect(est.note).toContain('利息');
+		expect(est.note).toContain('trade_history');
+		// 信用レートが揃っているので「API 未提供」note は出ない。
+		expect(est.note).not.toContain('API 未提供');
+	});
+
+	it('現物見積りには利息 note を付けない（カテゴリ A/B の分離）', () => {
+		const est = estimateOrderFee(makeSpec(), {
+			type: 'limit',
+			side: 'buy',
+			price: '15000000',
+			amount: '0.01',
+		});
+		expect(est.note).not.toContain('利息');
 	});
 
 	it('spec 無し: fallback レートで概算し note に「公称 taker」を含める', () => {

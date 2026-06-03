@@ -107,6 +107,10 @@ function isJpyQuote(spec: PairSpec | undefined): boolean {
 	return spec?.quote_asset?.toLowerCase() === 'jpy';
 }
 
+/** 信用見積りの note 文言（リファレンス6章: 利息は見積りでは扱わない）。 */
+const MARGIN_RATE_MISSING_NOTE = '信用手数料率が API 未提供のため概算';
+const MARGIN_INTEREST_NOTE = '利息（interest）は見積りに含めない（実績は trade_history）';
+
 /**
  * 注文 1 件の見積り手数料を算出する（カテゴリ A / B）。
  *
@@ -115,14 +119,23 @@ function isJpyQuote(spec: PairSpec | undefined): boolean {
  * - `market` / `stop` → 約定価格依存のため JPY 見積りは省略し note で明示。
  * - `spec === undefined` → フォールバック率（公称 taker）で概算し note に明示。
  * - `positionSide` 指定（信用）→ margin_{open|close}_{role}_fee_rate_quote を解決対象にする。
+ *   - 信用レートが null（API 未提供）の場合は公称 taker で概算しつつ note に「API 未提供」を明示する
+ *     （誤った確定値を出さない）。
+ *   - 利息（interest）は見積りでは扱わない（実績は trade_history）旨を note に明示し、
+ *     現物レートと混同させない（カテゴリ A/B の分離）。
  */
 export function estimateOrderFee(spec: PairSpec | undefined, order: OrderFeeInput): OrderFeeEstimate {
 	const role = feeRole(order.type, order.postOnly);
+	const isMargin = order.positionSide != null;
 
 	let rate: number;
-	if (order.positionSide != null) {
-		const open = isMarginOpen(order.side, order.positionSide);
+	// 信用レートが null/欠損で fallback に落ちたか（note で「API 未提供」を明示するため）。
+	let marginRateMissing = false;
+	if (isMargin) {
+		const open = isMarginOpen(order.side, order.positionSide as 'long' | 'short');
 		const raw = spec == null ? undefined : spec[marginFeeField(open, role)];
+		// toNum は 0 / 負値を保持し欠損のみ null を返す。null なら fallback 概算扱い。
+		marginRateMissing = toNum(raw) == null;
 		rate = resolveRate(raw);
 	} else {
 		rate = resolveFeeRate(spec, role);
@@ -134,7 +147,7 @@ export function estimateOrderFee(spec: PairSpec | undefined, order: OrderFeeInpu
 
 	let estimatedFeeQuote: number | undefined;
 	let estimatedCostQuote: number | undefined;
-	let note: string;
+	let baseNote: string;
 
 	if (isLimitFamily && priceNum != null && amountNum != null) {
 		const notional = priceNum * amountNum;
@@ -143,17 +156,24 @@ export function estimateOrderFee(spec: PairSpec | undefined, order: OrderFeeInpu
 		estimatedFeeQuote = fee;
 		// 負 fee（リベート）でも自然にコストが増減する。
 		estimatedCostQuote = order.side === 'buy' ? notional + fee : notional - fee;
-		note = order.postOnly ? 'maker 確定' : 'maker 想定（板を跨ぐと taker）';
+		baseNote = order.postOnly ? 'maker 確定' : 'maker 想定（板を跨ぐと taker）';
 	} else if (order.type === 'market' || order.type === 'stop') {
-		note = '成行/逆指値: 約定価格依存で JPY 見積りは省略';
+		baseNote = '成行/逆指値: 約定価格依存で JPY 見積りは省略';
 	} else {
 		// limit 系だが price 未指定 → notional 算出不可。
-		note = '指値だが price 未指定のため JPY 見積りは省略';
+		baseNote = '指値だが price 未指定のため JPY 見積りは省略';
 	}
 
+	const notes: string[] = [baseNote];
 	if (spec === undefined) {
-		note = `${note}（spec 不明のため公称 taker で概算）`;
+		notes.push('spec 不明のため公称 taker で概算');
+	}
+	if (isMargin) {
+		// 信用レート未提供時のみ「API 未提供」概算 note を付ける。
+		if (marginRateMissing) notes.push(MARGIN_RATE_MISSING_NOTE);
+		// 利息は常に見積り対象外である旨を明示（現物レートとの混同防止）。
+		notes.push(MARGIN_INTEREST_NOTE);
 	}
 
-	return { role, rate, estimatedFeeQuote, estimatedCostQuote, note };
+	return { role, rate, estimatedFeeQuote, estimatedCostQuote, note: notes.join(' / ') };
 }

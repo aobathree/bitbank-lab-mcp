@@ -17,7 +17,27 @@ bitbank の手数料は 3 カテゴリに分かれる。混同するとハルシ
   - 注文 1 件の見積り: `estimateOrderFee(spec, order)`
   - role 判定: `feeRole(type, postOnly?)`
 - **C はパススルー**。API が返す値をそのまま出力する。A と混同して `lib/fees.ts` に通さない。
-- **実績側は変更しない**。`portfolio/calc.ts` / `get_my_trade_history` 等は既に実額で正しい。
+- **実績側は変更しない**。`portfolio/calc.ts` / `get_my_trade_history` / `get_margin_trade_history` 等は
+  既に `fee_occurred_amount_quote` + `interest` を別建てで実額計上しており正しい。見積り側のみ本ルールの対象。
+
+## 信用（カテゴリ B）の見積り
+
+`estimateOrderFee` に `positionSide`（`long` / `short`）を渡すと信用見積りになる。
+
+- **open / close 判定**（`side` × `positionSide`）:
+
+  | 操作 | side | positionSide | 解決対象 |
+  |---|---|---|---|
+  | ロング新規(open) | `buy` | `long` | `margin_open_{role}_fee_rate_quote` |
+  | ショート新規(open) | `sell` | `short` | `margin_open_{role}_fee_rate_quote` |
+  | ロング決済(close) | `sell` | `long` | `margin_close_{role}_fee_rate_quote` |
+  | ショート決済(close) | `buy` | `short` | `margin_close_{role}_fee_rate_quote` |
+
+  `role` は現物と同じく `feeRole(type, postOnly)` で判定する（`??` / no-clamp は共通）。
+- **信用レートが null（API 未提供）の場合**: 公称 taker（`DEFAULT_TAKER_FALLBACK`）で概算し、
+  `note` に「信用手数料率が API 未提供のため概算」を必ず付ける。誤った確定値を出さない。
+- **利息（interest）は見積りでは扱わない**。`note` に「利息（interest）は見積りに含めない（実績は trade_history）」を
+  常に付け、現物の手数料率と混同させない。利息の実績は `get_margin_trade_history` の `interest` を参照する。
 
 ## 禁止事項（banned-patterns で機械検出）
 

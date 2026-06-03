@@ -1088,6 +1088,52 @@ describe('preview_order', () => {
 			expect(result.summary).toContain('信用新規');
 		});
 
+		it('信用レート null（デフォルトフィクスチャ）→ 公称 taker で概算し「API 未提供」note が content に出る', async () => {
+			// デフォルトフィクスチャの margin_*_fee_rate_quote は null。
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000',
+				position_side: 'long',
+			});
+			assertOk(result);
+			const fee = result.data.preview.fee_estimate;
+			// margin maker null → 公称 taker(0.0012) に fallback
+			expect(fee?.rate).toBe(0.0012);
+			expect(fee?.note).toContain('API 未提供');
+			// content（summary）に区分・「API 未提供」・利息 note が出る
+			expect(result.summary).toContain('信用新規');
+			expect(result.summary).toContain('API 未提供');
+			expect(result.summary).toContain('利息');
+		});
+
+		it('信用見積りには利息を含めない旨の note が content に出る', async () => {
+			installDefaultFetchMock([
+				{
+					...POSITIVE_MAKER_PAIR,
+					margin_open_maker_fee_rate_quote: '0.0004',
+					margin_close_maker_fee_rate_quote: '0.0003',
+				},
+			]);
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000',
+				position_side: 'long',
+			});
+			assertOk(result);
+			expect(result.summary).toContain('利息');
+			expect(result.summary).toContain('trade_history');
+			// レートが揃っているので「API 未提供」note は出ない
+			expect(result.summary).not.toContain('API 未提供');
+		});
+
 		it('信用ロング決済（sell+long）→ margin_close レートで解決する', async () => {
 			installDefaultFetchMock([
 				{
