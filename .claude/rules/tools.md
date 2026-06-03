@@ -7,6 +7,8 @@ globs: tools/**/*.ts, src/handlers/**/*.ts, src/tool-registry.ts, src/private/**
 ツールは `toolDef` エクスポート → `src/tool-registry.ts` が集約 → `src/server.ts` が自動登録。
 **server.ts を直接編集する必要はない。**
 
+> 手数料を扱うツールは `.claude/rules/fees.md`（A/B 見積り=`lib/fees.ts` 経由必須、C=パススルー）に従う。
+
 ## content テキストにデータを含める（重要）
 
 LLM は `structuredContent` を参照できない。`content[0].text` だけが LLM に見える。

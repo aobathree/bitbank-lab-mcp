@@ -69,6 +69,26 @@ export interface PairSpec {
 	stop_buy_order: boolean;
 	/** sell 注文停止 */
 	stop_sell_order: boolean;
+
+	// ── 取引手数料率（見積り用の単一ソース） ──
+	// bitbank API は文字列で返す。string のまま保持し、欠損は null。
+	// これらを直接 parse せず lib/fees.ts 経由で解決する（.claude/rules/fees.md）。
+	/** taker 手数料率（quote 建て） */
+	taker_fee_rate_quote: string | null;
+	/** maker 手数料率（quote 建て。campaign で負のリベートになりうる） */
+	maker_fee_rate_quote: string | null;
+	/** taker 手数料率（base 建て） */
+	taker_fee_rate_base: string | null;
+	/** maker 手数料率（base 建て） */
+	maker_fee_rate_base: string | null;
+	/** 信用 新規建て maker 手数料率（quote 建て） */
+	margin_open_maker_fee_rate_quote: string | null;
+	/** 信用 新規建て taker 手数料率（quote 建て） */
+	margin_open_taker_fee_rate_quote: string | null;
+	/** 信用 決済 maker 手数料率（quote 建て） */
+	margin_close_maker_fee_rate_quote: string | null;
+	/** 信用 決済 taker 手数料率（quote 建て） */
+	margin_close_taker_fee_rate_quote: string | null;
 }
 
 /** ペア名 → 仕様の Map（lowercase キー） */
@@ -100,6 +120,19 @@ interface RawPair {
 	stop_margin_short_order?: boolean;
 	stop_buy_order?: boolean;
 	stop_sell_order?: boolean;
+	taker_fee_rate_quote?: string | null;
+	maker_fee_rate_quote?: string | null;
+	taker_fee_rate_base?: string | null;
+	maker_fee_rate_base?: string | null;
+	margin_open_maker_fee_rate_quote?: string | null;
+	margin_open_taker_fee_rate_quote?: string | null;
+	margin_close_maker_fee_rate_quote?: string | null;
+	margin_close_taker_fee_rate_quote?: string | null;
+}
+
+/** 手数料率フィールドの正規化（string はそのまま、欠損/非文字列は null）。 */
+function feeRateOrNull(v: unknown): string | null {
+	return typeof v === 'string' ? v : null;
 }
 
 function normalize(raw: RawPair): PairSpec | null {
@@ -125,6 +158,14 @@ function normalize(raw: RawPair): PairSpec | null {
 		stop_margin_short_order: raw.stop_margin_short_order === true,
 		stop_buy_order: raw.stop_buy_order === true,
 		stop_sell_order: raw.stop_sell_order === true,
+		taker_fee_rate_quote: feeRateOrNull(raw.taker_fee_rate_quote),
+		maker_fee_rate_quote: feeRateOrNull(raw.maker_fee_rate_quote),
+		taker_fee_rate_base: feeRateOrNull(raw.taker_fee_rate_base),
+		maker_fee_rate_base: feeRateOrNull(raw.maker_fee_rate_base),
+		margin_open_maker_fee_rate_quote: feeRateOrNull(raw.margin_open_maker_fee_rate_quote),
+		margin_open_taker_fee_rate_quote: feeRateOrNull(raw.margin_open_taker_fee_rate_quote),
+		margin_close_maker_fee_rate_quote: feeRateOrNull(raw.margin_close_maker_fee_rate_quote),
+		margin_close_taker_fee_rate_quote: feeRateOrNull(raw.margin_close_taker_fee_rate_quote),
 	};
 }
 

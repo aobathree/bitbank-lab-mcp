@@ -363,6 +363,55 @@ describe('fetchPairsSpec', () => {
 		expect(btc?.is_enabled).toBe(true);
 	});
 
+	it('手数料率フィールドを文字列のまま保持する', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify(mockSpotPairsResponse()), { status: 200 }),
+		);
+		const map = await fetchPairsSpec();
+		const btc = map.get('btc_jpy');
+		// フィクスチャ: taker 0.0012 / maker -0.0002（負リベート）/ base 0 / margin null
+		expect(btc?.taker_fee_rate_quote).toBe('0.0012');
+		expect(btc?.maker_fee_rate_quote).toBe('-0.0002');
+		expect(btc?.taker_fee_rate_base).toBe('0');
+		expect(btc?.maker_fee_rate_base).toBe('0');
+	});
+
+	it('欠損した手数料率フィールドは null になる', async () => {
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify(mockSpotPairsResponse()), { status: 200 }),
+		);
+		const map = await fetchPairsSpec();
+		const btc = map.get('btc_jpy');
+		// フィクスチャの margin_* は null
+		expect(btc?.margin_open_maker_fee_rate_quote).toBeNull();
+		expect(btc?.margin_open_taker_fee_rate_quote).toBeNull();
+		expect(btc?.margin_close_maker_fee_rate_quote).toBeNull();
+		expect(btc?.margin_close_taker_fee_rate_quote).toBeNull();
+	});
+
+	it('手数料率フィールドが完全に欠落していても null で正規化される', async () => {
+		// fee 系を一切含まない最小ペア（unit_amount のみ override し name 維持）
+		const bare = {
+			name: 'xrp_jpy',
+			base_asset: 'xrp',
+			quote_asset: 'jpy',
+			unit_amount: '1',
+			limit_max_amount: '10000',
+			market_max_amount: '5000',
+			price_digits: 3,
+			amount_digits: 4,
+			is_enabled: true,
+		};
+		vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ success: 1, data: { pairs: [bare] } }), { status: 200 }),
+		);
+		const map = await fetchPairsSpec();
+		const xrp = map.get('xrp_jpy');
+		expect(xrp?.taker_fee_rate_quote).toBeNull();
+		expect(xrp?.maker_fee_rate_quote).toBeNull();
+		expect(xrp?.margin_open_maker_fee_rate_quote).toBeNull();
+	});
+
 	it('SPOT_PAIRS_URL を叩く', async () => {
 		const spy = vi
 			.spyOn(globalThis, 'fetch')

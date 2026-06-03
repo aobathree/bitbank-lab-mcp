@@ -66,6 +66,23 @@ if grep -n 'new Date' "$file" | grep -v '\.test\.ts' | grep -v '// *allow-date' 
 $banned"
 fi
 
+# Phase 4: 取引手数料の単一ソース強制（見積り手数料は lib/fees.ts 経由必須）
+#   - 手数料定数 0.0012 のハードコード
+#   - *_fee_rate_quote を Number()/parseFloat() で直接 parse、または || で処理する記述
+#   除外: lib/fees.ts 本体・tests/ 配下・行末 // allow-fee コメント
+FEE_PATTERN='0\.0012|(Number|parseFloat)\([^)]*_fee_rate_quote|_fee_rate_quote.*\|\|'
+case "$file" in
+  */lib/fees.ts|*/tests/*) ;;
+  *)
+    if grep -nE "$FEE_PATTERN" "$file" | grep -v '// *allow-fee' > /dev/null 2>&1; then
+      banned_fee="$(grep -nE "$FEE_PATTERN" "$file" | grep -v '// *allow-fee' | head -5)"
+      diag="${diag:+${diag}
+}[BannedPattern] 取引手数料の定数/直接 parse is banned. 見積り手数料は lib/fees.ts (resolveFeeRate / estimateOrderFee) 経由で解決してください (例外行末に // allow-fee):
+$banned_fee"
+    fi
+    ;;
+esac
+
 # additionalContext として注入
 if [ -n "$diag" ]; then
   jq -Rn --arg msg "$diag" '{
