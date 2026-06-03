@@ -308,6 +308,47 @@ describe('get_my_deposit_withdrawal', () => {
 		expect(result.summary).toContain('警告');
 	});
 
+	it('出金履歴の禁止フィールド（口座番号・名義等）を出力から除外する', async () => {
+		// rawWithdrawalHistoryResponse の fiat 出金レコードには
+		// 実 API が返す禁止フィールド（account_number / account_owner /
+		// branch_name / account_type / account_uuid）が含まれている。
+		// ツール出力（data.withdrawals[] と content[0].text 相当の summary）に
+		// これらが漏洩しないことを検証する。
+		setupFetchMock({});
+
+		const { default: getMyDepositWithdrawal } = await import('../../tools/private/get_my_deposit_withdrawal.js');
+		const result = await getMyDepositWithdrawal({});
+
+		assertOk(result);
+
+		// fiat 出金レコードが実際に取得されていることを前提条件として確認
+		const jpyWithdrawal = result.data.withdrawals.find((w) => w.uuid === 'wd-001');
+		expect(jpyWithdrawal).toBeDefined();
+		// 許可フィールド（bank_name）は残る
+		expect(jpyWithdrawal?.bank_name).toBe('テスト銀行');
+
+		const forbiddenKeys = ['account_number', 'account_owner', 'branch_name', 'account_type', 'account_uuid'];
+
+		// 個別レコードに禁止フィールドが無い
+		for (const w of result.data.withdrawals) {
+			for (const key of forbiddenKeys) {
+				expect(w).not.toHaveProperty(key);
+			}
+		}
+
+		// 結果全体（data + summary を含む）を文字列化して禁止フィールドのキー・値が現れないことを確認
+		const serialized = JSON.stringify(result);
+		for (const key of forbiddenKeys) {
+			expect(serialized).not.toContain(key);
+		}
+		// 機密の値そのものも漏れていないこと
+		// （account_number の '1234567' は許可フィールドである暗号資産アドレスと
+		//   部分一致するため値検証から除外し、キー検証＋固有値検証で担保する）
+		expect(serialized).not.toContain('タナカ タロウ');
+		expect(serialized).not.toContain('テスト支店');
+		expect(serialized).not.toContain('acc-uuid-001');
+	});
+
 	it('type=withdrawal で入金 API を呼ばない', async () => {
 		setupFetchMock({});
 
