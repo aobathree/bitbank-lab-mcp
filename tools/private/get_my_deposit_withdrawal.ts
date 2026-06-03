@@ -101,7 +101,11 @@ async function paginateDeposits(
 		if (batch.length < 100) {
 			return { deposits: all, complete: true };
 		}
-		const lastTs = batch[batch.length - 1]?.confirmed_at;
+		// confirmed_at は確認済の入金にのみ存在する（docs: "exists only for confirmed one"）。
+		// 末尾が未確認入金（status:'FOUND'）だと confirmed_at が欠落しカーソルが進まないため、
+		// 常在する found_at にフォールバックして早期終了を防ぐ。
+		const last = batch[batch.length - 1];
+		const lastTs = last?.confirmed_at ?? last?.found_at;
 		if (!lastTs) break;
 		since = String(lastTs + 1);
 	}

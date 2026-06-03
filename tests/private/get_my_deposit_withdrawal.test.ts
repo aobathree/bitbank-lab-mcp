@@ -146,6 +146,62 @@ describe('get_my_deposit_withdrawal', () => {
 		expect(result.meta.isComplete).toBe(true);
 	});
 
+	it('ページネーション: 100 件バッチの末尾が未確認入金(confirmed_at 欠落)でも break せず found_at で次ページを取得する', async () => {
+		let depositCallCount = 0;
+		const sinceValues: string[] = [];
+		setupFetchMock({
+			customHandler: (url: string) => {
+				if (url.includes('deposit_history')) {
+					depositCallCount++;
+					const u = new URL(url);
+					const since = u.searchParams.get('since');
+					if (since) sinceValues.push(since);
+					if (depositCallCount === 1) {
+						// 100 件返す → 次ページあり。末尾レコードは status:'FOUND'（confirmed_at プロパティ無し）。
+						const deposits = Array.from({ length: 100 }, (_, i) => {
+							const isLast = i === 99;
+							return {
+								uuid: `dep-page1-${i}`,
+								asset: 'jpy',
+								amount: '10000',
+								status: isLast ? 'FOUND' : 'DONE',
+								found_at: 1709900000000 + i * 1000,
+								// 末尾の未確認入金には confirmed_at を付与しない
+								...(isLast ? {} : { confirmed_at: 1709900000000 + i * 1000 + 100 }),
+							};
+						});
+						return new Response(JSON.stringify(mockBitbankSuccess({ deposits })), { status: 200 });
+					}
+					// 2 ページ目: 30 件 → 完了
+					const deposits = Array.from({ length: 30 }, (_, i) => ({
+						uuid: `dep-page2-${i}`,
+						asset: 'jpy',
+						amount: '10000',
+						status: 'DONE',
+						found_at: 1709990000000 + i * 1000,
+						confirmed_at: 1709990000000 + i * 1000 + 100,
+					}));
+					return new Response(JSON.stringify(mockBitbankSuccess({ deposits })), { status: 200 });
+				}
+				if (url.includes('withdrawal_history')) {
+					return new Response(JSON.stringify(mockBitbankSuccess({ withdrawals: [] })), { status: 200 });
+				}
+				throw new Error(`Unexpected URL: ${url}`);
+			},
+		});
+
+		const { default: getMyDepositWithdrawal } = await import('../../tools/private/get_my_deposit_withdrawal.js');
+		const result = await getMyDepositWithdrawal({ asset: 'jpy', type: 'deposit' });
+
+		assertOk(result);
+		// 早期 break せず 2 ページ目を取得 → 100 + 30 = 130 件
+		expect(depositCallCount).toBe(2);
+		expect(result.data.deposits.length).toBe(130);
+		expect(result.meta.isComplete).toBe(true);
+		// カーソルは末尾レコードの found_at (+1) にフォールバックして前進している
+		expect(sinceValues).toContain(String(1709900000000 + 99 * 1000 + 1));
+	});
+
 	it('部分的失敗時に警告付きで成功する', async () => {
 		setupFetchMock({ depositFail: true });
 

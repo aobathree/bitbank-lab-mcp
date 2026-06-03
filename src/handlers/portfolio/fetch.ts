@@ -52,8 +52,12 @@ async function paginateDeposits(
 		}
 		// 同一タイムスタンプが DW_PAGE_SIZE 件以上連続して進捗しない場合の保険
 		if (newRecords.length === 0) return { deposits: all, complete: false };
-		// 次ページ: 最後のレコードの confirmed_at を since に（同一 ts のレコードを次ページに含めて再取得し、dedup する）
-		const lastTs = batch[batch.length - 1]?.confirmed_at;
+		// 次ページ: 最後のレコードの confirmed_at を since に（同一 ts のレコードを次ページに含めて再取得し、dedup する）。
+		// confirmed_at は確認済の入金にのみ存在する（docs: "exists only for confirmed one"）。
+		// 末尾が未確認入金（status:'FOUND'）だと confirmed_at が欠落しカーソルが進まないため、
+		// 常在する found_at にフォールバックして早期終了を防ぐ。
+		const last = batch[batch.length - 1];
+		const lastTs = last?.confirmed_at ?? last?.found_at;
 		if (!lastTs) break;
 		since = String(lastTs);
 	}
