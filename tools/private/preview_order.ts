@@ -204,7 +204,13 @@ export default async function previewOrder(args: {
 	if (feeEstimate.estimatedCostQuote != null) {
 		lines.push(`  推定コスト: ${isJpy ? formatPrice(feeEstimate.estimatedCostQuote) : feeEstimate.estimatedCostQuote}`);
 	}
-	lines.push(`  備考: ${feeEstimate.note}`);
+	// note は ' / ' 区切りの複数注記（信用は「API 未提供」概算・利息は見積り対象外を含む）。
+	// 読みやすさのため備考を行ごとに分解して表示する。
+	const noteParts = feeEstimate.note.split(' / ');
+	lines.push(`  備考: ${noteParts[0]}`);
+	for (const part of noteParts.slice(1)) {
+		lines.push(`        ${part}`);
+	}
 
 	if (isMargin) {
 		lines.push('');

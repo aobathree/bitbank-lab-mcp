@@ -292,6 +292,25 @@ bitbank 公式 REST API spec の `POST /v1/user/spot/order` は上記に加え `
 - 利息・手数料は決済時に徴収されます
 - 建玉管理は平均法（加重平均）で行われます
 
+### 手数料の取り扱い（3 カテゴリ）
+
+手数料は **見積り（estimate）** と **実績（actual）** でソースが異なります。混同するとハルシネーションや
+誤った発注見積りの原因になるため、以下の taxonomy で厳密に分けています（開発ルール: `.claude/rules/fees.md`）。
+
+| | カテゴリ | 見積り（estimate）のソース | 実績（actual）のソース |
+|---|---|---|---|
+| **A** | 取引手数料 maker/taker | `GET /v1/spot/pairs` の `taker_fee_rate_quote` / `maker_fee_rate_quote` | `trade_history` の実額（`fee_amount_*` / `fee_occurred_amount_quote`） |
+| **B** | 信用 手数料 / 利息 | `/spot/pairs` の `margin_{open,close}_{maker,taker}_fee_rate_quote` | `trade_history` の実額（`fee` / `interest`） |
+| **C** | 入出金 / 出金手数料 | API 値パススルー（`withdrawal_fee` 等） | 同左 |
+
+- **見積り（A / B）**は `preview_order` が `/spot/pairs` のレート（`lib/fees.ts` 経由）で算出します。
+  - 信用（B）は `position_side` から **新規(open) / 決済(close)** を判定し、対応する `margin_*` レートを使います。
+  - 信用レートが API 未提供（`null`）の場合は公称 taker で概算し、「信用手数料率が API 未提供のため概算」と明示します。
+  - **利息（interest）は見積りには含めません**（決済時に確定するため）。実績は `get_margin_trade_history` の `interest` を参照してください。
+- **実績**は `get_my_trade_history` / `get_margin_trade_history` / `analyze_my_portfolio` が
+  約定履歴の実額（手数料・利息を別建て）で計上します。見積りレートでは上書きしません。
+- **入出金手数料（C）**は API の返す値をそのまま出力します（A/B の見積りロジックは通しません）。
+
 ## 制限事項
 
 - bitbank API のレート制限に従う（429 エラー時は自動リトライ）
