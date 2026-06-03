@@ -161,6 +161,50 @@ describe('BitbankPrivateClient', () => {
 			}
 		});
 
+		it('エラーコード 50009 → not_found (注文・データなし)', async () => {
+			const fetcher = createMockFetcher([jsonResponse(mockBitbankError(50009), 400)]);
+			const client = new BitbankPrivateClient({ fetcher, maxRetries: 0, timeoutMs: 1000 });
+
+			try {
+				await client.get('/v1/user/spot/order');
+				expect.fail('should throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(PrivateApiError);
+				const e = err as PrivateApiError;
+				expect(e.errorType).toBe('not_found');
+				expect(e.message).toContain('見つかりません');
+				expect(e.bitbankCode).toBe(50009);
+			}
+		});
+
+		it('エラーコード 40000番台 → validation_error (パラメータ不正)', async () => {
+			const fetcher = createMockFetcher([jsonResponse(mockBitbankError(40024), 400)]);
+			const client = new BitbankPrivateClient({ fetcher, maxRetries: 0, timeoutMs: 1000 });
+
+			try {
+				await client.get('/v1/user/assets');
+				expect.fail('should throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(PrivateApiError);
+				const e = err as PrivateApiError;
+				expect(e.errorType).toBe('validation_error');
+				expect(e.bitbankCode).toBe(40024);
+			}
+		});
+
+		it('エラーコード 60001 (残高不足) → upstream_error (スコープ外: 現状維持)', async () => {
+			const fetcher = createMockFetcher([jsonResponse(mockBitbankError(60001), 400)]);
+			const client = new BitbankPrivateClient({ fetcher, maxRetries: 0, timeoutMs: 1000 });
+
+			try {
+				await client.get('/v1/user/assets');
+				expect.fail('should throw');
+			} catch (err) {
+				expect(err).toBeInstanceOf(PrivateApiError);
+				expect((err as PrivateApiError).errorType).toBe('upstream_error');
+			}
+		});
+
 		it('不明なエラーコード → upstream_error', async () => {
 			const fetcher = createMockFetcher([jsonResponse(mockBitbankError(99999), 400)]);
 			const client = new BitbankPrivateClient({ fetcher, maxRetries: 0, timeoutMs: 1000 });

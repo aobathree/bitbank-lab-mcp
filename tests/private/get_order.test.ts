@@ -140,7 +140,7 @@ describe('get_order', () => {
 		const result = await getOrder({ pair: 'btc_jpy', order_id: 2001 });
 
 		assertFail(result);
-		expect(result.meta.errorType).toBe('upstream_error');
+		expect(result.meta.errorType).toBe('not_found');
 		const expected = getBitbankErrorMessage(50009);
 		expect(expected).toBeDefined();
 		expect(result.summary).toBe(`Error: ${expected}`);

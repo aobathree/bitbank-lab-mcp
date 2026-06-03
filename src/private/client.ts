@@ -292,6 +292,29 @@ export class BitbankPrivateClient {
 			);
 		}
 
+		// 注文・データが存在しない（docs: 50009 等）
+		const NOT_FOUND_CODES = new Set([50009]);
+		// パラメータ系（30000番台=必須不足 / 40000番台=不正）
+		if (errorCode != null) {
+			const libMessage = getBitbankErrorMessage(errorCode);
+			if (NOT_FOUND_CODES.has(errorCode)) {
+				return new PrivateApiError(
+					libMessage ?? '指定されたデータが見つかりません',
+					'not_found',
+					httpStatus,
+					errorCode,
+				);
+			}
+			if (errorCode >= 30000 && errorCode < 50000) {
+				return new PrivateApiError(
+					libMessage ?? 'リクエストパラメータが不正です',
+					'validation_error',
+					httpStatus,
+					errorCode,
+				);
+			}
+		}
+
 		// 共通テーブルに登録されたコード
 		if (errorCode != null) {
 			const libMessage = getBitbankErrorMessage(errorCode);
