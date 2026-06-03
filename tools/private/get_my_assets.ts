@@ -20,7 +20,7 @@ interface RawAsset {
 	amount_precision: number;
 	onhand_amount: string;
 	locked_amount: string;
-	withdrawal_fee: { min: string; max: string } | string;
+	withdrawal_fee: { min: string; max: string } | { under: string; over: string; threshold: string };
 	stop_deposit: boolean;
 	stop_withdrawal: boolean;
 }
