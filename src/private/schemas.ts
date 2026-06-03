@@ -512,9 +512,19 @@ export const GetMarginStatusDataSchema = z.object({
 	total_open_order_maintenance_margin: z.string().describe('注文維持保証金'),
 	total_long_open_order_maintenance_margin: z.string().describe('ロング注文維持保証金'),
 	total_short_open_order_maintenance_margin: z.string().describe('ショート注文維持保証金'),
-	losscut_rate: z.string().nullable().describe('強制決済率（%、建玉なし時は null）'),
-	available_long_margin: z.string().describe('ロング新規建てご利用可能額'),
-	available_short_margin: z.string().describe('ショート新規建てご利用可能額'),
+	margin_call_percentage: z.string().nullable().describe('追証率（%、建玉なし時は null）'),
+	losscut_percentage: z.string().nullable().describe('強制決済率（%、建玉なし時は null）'),
+	buy_credit: z.string().describe('買建与信（買い新規建て可能額）'),
+	sell_credit: z.string().describe('売建与信（売り新規建て可能額）'),
+	available_balances: z
+		.array(
+			z.object({
+				pair: z.string().describe('通貨ペア'),
+				long: z.string().describe('ロング新規建て可能額'),
+				short: z.string().describe('ショート新規建て可能額'),
+			}),
+		)
+		.describe('通貨ペアごとの新規建て可能額'),
 	timestamp: z.string(),
 });
 

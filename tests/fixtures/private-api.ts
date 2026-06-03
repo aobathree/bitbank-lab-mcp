@@ -213,9 +213,14 @@ export const rawMarginStatusResponse = {
 	total_open_order_maintenance_margin: '30000',
 	total_long_open_order_maintenance_margin: '20000',
 	total_short_open_order_maintenance_margin: '10000',
-	losscut_rate: '110.00',
-	available_long_margin: '500000',
-	available_short_margin: '450000',
+	margin_call_percentage: '150.00',
+	losscut_percentage: '110.00',
+	buy_credit: '500000',
+	sell_credit: '450000',
+	available_balances: [
+		{ pair: 'btc_jpy', long: '500000', short: '450000' },
+		{ pair: 'eth_jpy', long: '300000', short: '250000' },
+	],
 };
 
 // ── 信用建玉 ──

@@ -36,8 +36,10 @@ describe('get_margin_status', () => {
 		assertOk(result);
 		expect(result.data.status).toBe('NORMAL');
 		expect(result.data.total_margin_balance).toBe('1000000');
-		expect(result.data.available_long_margin).toBe('500000');
-		expect(result.data.available_short_margin).toBe('450000');
+		expect(result.data.buy_credit).toBe('500000');
+		expect(result.data.sell_credit).toBe('450000');
+		expect(result.data.available_balances).toHaveLength(2);
+		expect(result.data.available_balances[0]).toEqual({ pair: 'btc_jpy', long: '500000', short: '450000' });
 		expect(result.meta.hasWarning).toBe(false);
 	});
 
@@ -113,7 +115,8 @@ describe('get_margin_status', () => {
 		const noPositions = {
 			...rawMarginStatusResponse,
 			total_margin_balance_percentage: null,
-			losscut_rate: null,
+			margin_call_percentage: null,
+			losscut_percentage: null,
 		};
 		setupFetchMock(mockBitbankSuccess(noPositions));
 
@@ -122,7 +125,8 @@ describe('get_margin_status', () => {
 
 		assertOk(result);
 		expect(result.data.total_margin_balance_percentage).toBeNull();
-		expect(result.data.losscut_rate).toBeNull();
+		expect(result.data.losscut_percentage).toBeNull();
+		expect(result.data.margin_call_percentage).toBeNull();
 		expect(result.summary).not.toContain('保証金率');
 		expect(result.summary).not.toContain('強制決済率');
 	});

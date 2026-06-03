@@ -6,7 +6,7 @@
  */
 
 import { nowIso } from '../../lib/datetime.js';
-import { formatPrice } from '../../lib/formatter.js';
+import { formatPair, formatPrice } from '../../lib/formatter.js';
 import { fail, ok } from '../../lib/result.js';
 import { getDefaultClient, PrivateApiError } from '../../src/private/client.js';
 import { GetMarginStatusInputSchema, GetMarginStatusOutputSchema } from '../../src/private/schemas.js';
@@ -28,9 +28,15 @@ interface RawMarginStatus {
 	total_open_order_maintenance_margin: string;
 	total_long_open_order_maintenance_margin: string;
 	total_short_open_order_maintenance_margin: string;
-	losscut_rate: string | null;
-	available_long_margin: string;
-	available_short_margin: string;
+	margin_call_percentage: string | null;
+	losscut_percentage: string | null;
+	buy_credit: string;
+	sell_credit: string;
+	available_balances: Array<{
+		pair: string;
+		long: string;
+		short: string;
+	}>;
 }
 
 /** 警告が必要なステータス */
@@ -81,15 +87,29 @@ export default async function getMarginStatus(_args: Record<string, unknown>) {
 		lines.push(`  ショート: ${formatPrice(Number(raw.total_short_position_maintenance_margin))} 円`);
 		lines.push(`  注文: ${formatPrice(Number(raw.total_open_order_maintenance_margin))} 円`);
 
-		if (raw.losscut_rate !== null) {
+		if (raw.margin_call_percentage !== null || raw.losscut_percentage !== null) {
 			lines.push('');
-			lines.push(`強制決済率: ${raw.losscut_rate}%`);
+			if (raw.margin_call_percentage !== null) {
+				lines.push(`追証率: ${raw.margin_call_percentage}%`);
+			}
+			if (raw.losscut_percentage !== null) {
+				lines.push(`強制決済率: ${raw.losscut_percentage}%`);
+			}
 		}
 
 		lines.push('');
 		lines.push(
-			`新規建て可能額 — ロング: ${formatPrice(Number(raw.available_long_margin))} 円 / ショート: ${formatPrice(Number(raw.available_short_margin))} 円`,
+			`与信 — 買建: ${formatPrice(Number(raw.buy_credit))} 円 / 売建: ${formatPrice(Number(raw.sell_credit))} 円`,
 		);
+		const availableBalances = raw.available_balances ?? [];
+		if (availableBalances.length > 0) {
+			lines.push('新規建て可能額（ペアごと）:');
+			for (const b of availableBalances) {
+				lines.push(
+					`  ${formatPair(b.pair)} — ロング: ${formatPrice(Number(b.long))} 円 / ショート: ${formatPrice(Number(b.short))} 円`,
+				);
+			}
+		}
 
 		if (hasWarning) {
 			lines.push('');
@@ -119,9 +139,11 @@ export default async function getMarginStatus(_args: Record<string, unknown>) {
 			total_open_order_maintenance_margin: raw.total_open_order_maintenance_margin,
 			total_long_open_order_maintenance_margin: raw.total_long_open_order_maintenance_margin,
 			total_short_open_order_maintenance_margin: raw.total_short_open_order_maintenance_margin,
-			losscut_rate: raw.losscut_rate,
-			available_long_margin: raw.available_long_margin,
-			available_short_margin: raw.available_short_margin,
+			margin_call_percentage: raw.margin_call_percentage,
+			losscut_percentage: raw.losscut_percentage,
+			buy_credit: raw.buy_credit,
+			sell_credit: raw.sell_credit,
+			available_balances: raw.available_balances ?? [],
 			timestamp,
 		};
 
