@@ -327,6 +327,81 @@ describe('preview_order', () => {
 
 			assertOk(result);
 			expect(result.summary).toContain('Post Only');
+			// post_only:true は preview に含まれる
+			expect(result.data.preview.post_only).toBe(true);
+		});
+
+		// post_only:false を明示した limit 注文。トークン生成側（tokenParams）は
+		// `post_only != null` で false も含めるため、preview 側のガードも揃っていないと
+		// UI→create_order でパラメータ集合が食い違い token_invalid になる。
+		it('post_only:false を明示した limit 注文の preview に post_only が含まれる', async () => {
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const result = await previewOrder({
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'buy',
+				type: 'limit',
+				price: '14000000',
+				post_only: false,
+			});
+
+			assertOk(result);
+			// false を落とさず preview に残すことでトークン整合が保たれる
+			expect(result.data.preview.post_only).toBe(false);
+			// Post Only は無効なのでラベルは出さない（既存挙動）
+			expect(result.summary).not.toContain('Post Only');
+		});
+
+		// 受け入れ条件: preview→確定（create_order）が token_invalid にならないことを
+		// 同一パラメータ集合のトークンで end-to-end に検証する。
+		it('post_only:false の preview トークンで create_order がトークン検証を通過する', async () => {
+			// /spot/pairs（事前再検証）と発注 POST を正常応答にする
+			globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+				const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : String(input);
+				if (url.includes('/spot/pairs')) {
+					return new Response(JSON.stringify(mockSpotPairsResponse()), { status: 200 });
+				}
+				return new Response(
+					JSON.stringify(
+						mockBitbankSuccess({
+							order_id: 12345,
+							pair: 'btc_jpy',
+							side: 'buy',
+							type: 'limit',
+							start_amount: '0.01',
+							remaining_amount: '0.01',
+							executed_amount: '0',
+							average_price: '0',
+							status: 'UNFILLED',
+							ordered_at: 1710000000000,
+						}),
+					),
+					{ status: 200 },
+				);
+			}) as unknown as typeof fetch;
+
+			const orderArgs = {
+				pair: 'btc_jpy',
+				amount: '0.01',
+				side: 'buy' as const,
+				type: 'limit' as const,
+				price: '14000000',
+				post_only: false,
+			};
+
+			const { default: previewOrder } = await import('../../tools/private/preview_order.js');
+			const preview = await previewOrder(orderArgs);
+			assertOk(preview);
+
+			const { default: createOrder } = await import('../../tools/private/create_order.js');
+			const created = await createOrder({
+				...orderArgs,
+				confirmation_token: preview.data.confirmation_token!,
+				token_expires_at: preview.data.expires_at!,
+			});
+
+			// パラメータ集合が一致するため token_invalid にならず発注まで到達する
+			assertOk(created);
 		});
 
 		it('stop 注文でトリガー価格が表示される', async () => {
