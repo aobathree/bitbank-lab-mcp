@@ -2,6 +2,8 @@
 description: bitbank の市場データと取引機能を生成AIから扱うためのMCPサーバー
 ---
 
+※bitbank 非公式です
+
 # はじめに
 
 **bitbank-lab-mcp** は、bitbank（暗号資産取引所）の市場データと取引機能を、Claude Desktop / Cursor / Codex / Gemini CLI などの生成AIクライアントから扱えるようにする MCPサーバー です。
