@@ -230,7 +230,7 @@ export default async function previewOrder(args: {
 	const preview: Record<string, unknown> = { pair, amount, side, type };
 	if (price) preview.price = price;
 	if (trigger_price) preview.trigger_price = trigger_price;
-	if (post_only) preview.post_only = post_only;
+	if (post_only != null) preview.post_only = post_only;
 	if (position_side) preview.position_side = position_side;
 
 	const feeEstimateOut: Record<string, unknown> = {
