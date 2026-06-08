@@ -1127,9 +1127,11 @@ describe('analyze_my_portfolio — equity series データ品質', () => {
 					amount_precision: 0,
 					onhand_amount: '10560',
 					locked_amount: '0',
-					withdrawal_fee: '550',
+					withdrawing_amount: '0',
+					withdrawal_fee: { under: '550', over: '770', threshold: '30000' },
 					stop_deposit: false,
 					stop_withdrawal: false,
+					collateral_ratio: '1',
 				},
 			],
 		};

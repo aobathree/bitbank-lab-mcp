@@ -9,21 +9,10 @@ import { toNum } from '../../lib/conversions.js';
 import { nowIso } from '../../lib/datetime.js';
 import { formatPrice } from '../../lib/formatter.js';
 import { fail, ok } from '../../lib/result.js';
+import type { RawAsset } from '../../src/handlers/portfolio/types.js';
 import { getDefaultClient, PrivateApiError } from '../../src/private/client.js';
 import { GetMyAssetsInputSchema, GetMyAssetsOutputSchema } from '../../src/private/schemas.js';
 import type { ToolDefinition } from '../../src/tool-definition.js';
-
-/** bitbank /v1/user/assets のレスポンス型 */
-interface RawAsset {
-	asset: string;
-	free_amount: string;
-	amount_precision: number;
-	onhand_amount: string;
-	locked_amount: string;
-	withdrawal_fee: { min: string; max: string } | { under: string; over: string; threshold: string };
-	stop_deposit: boolean;
-	stop_withdrawal: boolean;
-}
 
 /**
  * public API の tickers_jpy から各通貨の最新価格を取得する。

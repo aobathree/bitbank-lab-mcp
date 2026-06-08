@@ -7,6 +7,10 @@ import type { HttpFetcher } from '../../src/private/client.js';
 
 // ── 資産 ──
 
+// 実 API（/v1/user/assets）の assets[] 形に準拠。
+// withdrawing_amount / network_list / collateral_ratio は公式 rest-api_JP.md の
+// レスポンス例どおりに含める（jpy は network_list を持たない点も再現）。
+// 社内一次ソース: docs/internal/bitbank-api-fields.md
 export const rawAssetsResponse = {
 	assets: [
 		{
@@ -15,9 +19,14 @@ export const rawAssetsResponse = {
 			amount_precision: 8,
 			onhand_amount: '0.6',
 			locked_amount: '0.1',
+			withdrawing_amount: '0',
 			withdrawal_fee: { min: '0.0006', max: '0.0006' },
 			stop_deposit: false,
 			stop_withdrawal: false,
+			network_list: [
+				{ asset: 'btc', network: 'btc', stop_deposit: false, stop_withdrawal: false, withdrawal_fee: '0.0006' },
+			],
+			collateral_ratio: '0.95',
 		},
 		{
 			asset: 'eth',
@@ -25,9 +34,14 @@ export const rawAssetsResponse = {
 			amount_precision: 8,
 			onhand_amount: '2.0',
 			locked_amount: '0',
+			withdrawing_amount: '0',
 			withdrawal_fee: { min: '0.005', max: '0.005' },
 			stop_deposit: false,
 			stop_withdrawal: false,
+			network_list: [
+				{ asset: 'eth', network: 'eth(erc20)', stop_deposit: false, stop_withdrawal: false, withdrawal_fee: '0.005' },
+			],
+			collateral_ratio: '0.90',
 		},
 		{
 			asset: 'xrp',
@@ -35,9 +49,14 @@ export const rawAssetsResponse = {
 			amount_precision: 6,
 			onhand_amount: '1000',
 			locked_amount: '0',
+			withdrawing_amount: '0',
 			withdrawal_fee: { min: '0.15', max: '0.15' },
 			stop_deposit: false,
 			stop_withdrawal: false,
+			network_list: [
+				{ asset: 'xrp', network: 'xrp', stop_deposit: false, stop_withdrawal: false, withdrawal_fee: '0.15' },
+			],
+			collateral_ratio: '0.80',
 		},
 		{
 			asset: 'jpy',
@@ -45,9 +64,11 @@ export const rawAssetsResponse = {
 			amount_precision: 0,
 			onhand_amount: '500000',
 			locked_amount: '0',
+			withdrawing_amount: '0',
 			withdrawal_fee: { under: '550', over: '770', threshold: '30000' },
 			stop_deposit: false,
 			stop_withdrawal: false,
+			collateral_ratio: '1',
 		},
 		{
 			asset: 'doge',
@@ -55,9 +76,14 @@ export const rawAssetsResponse = {
 			amount_precision: 8,
 			onhand_amount: '0',
 			locked_amount: '0',
+			withdrawing_amount: '0',
 			withdrawal_fee: { min: '5', max: '5' },
 			stop_deposit: false,
 			stop_withdrawal: false,
+			network_list: [
+				{ asset: 'doge', network: 'doge', stop_deposit: false, stop_withdrawal: false, withdrawal_fee: '5' },
+			],
+			collateral_ratio: '0.70',
 		},
 	],
 };

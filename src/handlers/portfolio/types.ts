@@ -9,15 +9,35 @@ import type { GetMarginPositionsDataSchema, GetMarginStatusDataSchema } from '..
 
 // ── Private API レスポンス型 ──
 
+/**
+ * bitbank `/v1/user/assets` の `assets[]` 要素（公式 rest-api_JP.md 準拠の単一ソース）。
+ *
+ * get_my_assets / analyze_my_portfolio の両方がこの型を共有する
+ * （フィクスチャ・型が実 API 形からドリフトする再発を防ぐため、定義はここ 1 箇所に集約）。
+ * フィールド一覧の社内一次ソースは `docs/internal/bitbank-api-fields.md`。
+ */
 export interface RawAsset {
 	asset: string;
 	free_amount: string;
+	amount_precision: number;
 	onhand_amount: string;
 	locked_amount: string;
-	amount_precision: number;
-	withdrawal_fee: { min: string; max: string } | string;
+	/** 出金処理中の数量 */
+	withdrawing_amount: string;
+	/** 出金手数料。暗号資産は {min,max}、jpy は {under,over,threshold}（カテゴリ C: パススルー） */
+	withdrawal_fee: { min: string; max: string } | { under: string; over: string; threshold: string };
 	stop_deposit: boolean;
 	stop_withdrawal: boolean;
+	/** ネットワーク別の入出金設定。jpy など対象外の資産では undefined */
+	network_list?: Array<{
+		asset: string;
+		network: string;
+		stop_deposit: boolean;
+		stop_withdrawal: boolean;
+		withdrawal_fee: string;
+	}>;
+	/** 代用掛け目（信用取引の担保評価率） */
+	collateral_ratio: string;
 }
 
 export interface RawTrade {
