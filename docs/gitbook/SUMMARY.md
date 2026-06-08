@@ -15,15 +15,20 @@
 
 * [何を聞けばいい？（プロンプト集）](guides/prompts.md)
 * [ツールの選び方・使い分け](guides/tools.md)
+* [チャートを表示する](guides/charts.md)
+* [会話レシピ集](guides/recipes.md)
 
 ## Private API（取引機能）
 
 * [概要とセットアップ](private-api/setup.md)
 * [取引の安全設計（2段階確認）](private-api/safety.md)
 * [ツールと注文タイプ](private-api/tools.md)
+* [手数料の考え方](private-api/fees.md)
 
 ## Reference
 
+* [よくある質問（FAQ）](reference/faq.md)
+* [免責事項](reference/disclaimer.md)
 * [GitHubリポジトリ](https://github.com/tjackiet/bitbank-genesis-mcp-server)
 * [全ツール一覧（docs/tools.md）](https://github.com/tjackiet/bitbank-genesis-mcp-server/blob/main/docs/tools.md)
 * [変更履歴（CHANGELOG）](https://github.com/tjackiet/bitbank-genesis-mcp-server/blob/main/CHANGELOG.md)
