@@ -33,7 +33,7 @@ bitbank の公開APIから取得した価格・板情報・約定履歴・ロー
 **対象読者**: bitbank で取引したことはあるが、AI連携・MCP は初めて、というレベルの方を想定しています。
 {% endhint %}
 
-まずは [MCPサーバーを使う](getting-started/mcp-server.md) を順に読み進めてください。Claude Desktop で bitbank のデータをAIに分析させるところまで、5分程度で到達できます。
+まずは [クイックスタート（5分）](getting-started/quickstart.md) を順に読み進めてください。Claude Desktop で bitbank のデータをAIに分析させるところまで、5分程度で到達できます。各クライアント別の詳しい設定は [セットアップ詳細](getting-started/setup.md) にまとめています。
 
 ## 注意事項
 
