@@ -1,0 +1,91 @@
+name: bitbank-api-docs drift check
+
+# 公式 docs (bitbankinc/bitbank-api-docs) の更新を検知し、ローカルミラー
+# (docs/internal/bitbank-api-fields.md) の鮮度が切れたら issue を起票する。
+# 「鮮度維持」はネットのある CI 側に置き、P4「外部 API 契約整合」診断側は
+# オフラインのミラーで完結させる（診断側に fetch を持たせない）。
+
+on:
+  schedule:
+    - cron: '0 0 * * 1' # 毎週月曜 00:00 UTC
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
+
+      - name: Compare upstream commit vs lock
+        id: diff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          lock_file="docs/internal/bitbank-api-docs.lock.json"
+          repo="$(jq -r '.repo' "$lock_file")"
+          drift=0
+          report=""
+          # lock に載っている全ファイルを upstream の per-file 最新コミットと照合する。
+          for f in $(jq -r '.files | keys[]' "$lock_file"); do
+            up="$(curl -sSf \
+                    -H "Accept: application/vnd.github+json" \
+                    -H "Authorization: Bearer ${GH_TOKEN}" \
+                    "https://api.github.com/repos/${repo}/commits?path=${f}&per_page=1" \
+                  | jq -r '.[0].sha // empty')"
+            lock="$(jq -r ".files[\"${f}\"].commit" "$lock_file")"
+            # API 失敗 / 想定外応答（40桁 hex でない）は no-drift に化けさせず、明示的に失敗させる。
+            if ! printf '%s' "$up" | grep -Eq '^[0-9a-f]{40}$'; then
+              echo "::error::upstream commit を取得できませんでした (${f}): '${up}'"
+              exit 1
+            fi
+            echo "${f}: lock=${lock} upstream=${up}"
+            if [ "$up" != "$lock" ]; then
+              echo "DRIFT ${f}: lock=${lock} upstream=${up}"
+              report="${report}- \`${f}\`: lock \`${lock:0:12}\` -> upstream \`${up:0:12}\`"$'\n'
+              drift=1
+            fi
+          done
+          {
+            echo "drift=${drift}"
+            echo "report<<DRIFT_EOF"
+            printf '%s' "$report"
+            echo "DRIFT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Open drift issue (skip if an open one already exists)
+        if: steps.diff.outputs.drift == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT: ${{ steps.diff.outputs.report }}
+        run: |
+          set -euo pipefail
+          marker="bitbank-api-docs mirror drift"
+          title="⚠️ ミラー要更新: bitbank-api-docs drift 検知 [${marker}]"
+          existing="$(gh issue list --state open --search "${marker} in:title" \
+                        --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "既に open の drift issue #${existing} があるため重複起票しない。"
+            exit 0
+          fi
+          {
+            echo "公式 docs \`bitbankinc/bitbank-api-docs\` がローカルミラーの lock より新しくなっています。"
+            echo
+            echo "**drift（lock -> upstream）:**"
+            echo
+            printf '%s\n' "$REPORT"
+            echo "## 対応"
+            echo "1. 最新 docs を取得し直し \`docs/internal/bitbank-api-fields.md\` の逐語表・JSON 例・行番号を更新。"
+            echo "2. \`docs/internal/bitbank-api-docs.lock.json\` の \`commit\` / \`fetched_at\` を更新。"
+            echo "3. P4「外部 API 契約整合」診断を再実行し、新フィールド/型変更を反映。"
+            echo
+            echo "> ground truth の優先順位は **live > ミラー**。更新までは P4 の該当エンドポイント判定を"
+            echo "> 「確定」から「要追加確認」へ降格すること（鮮度ゲート）。"
+            echo
+            echo "_run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}_"
+          } > issue-body.md
+          gh issue create --title "$title" --body-file issue-body.md
