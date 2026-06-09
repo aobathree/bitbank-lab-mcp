@@ -52,7 +52,7 @@ bitbank の公開APIから取得した価格・板情報・約定履歴・ロー
 {% endhint %}
 
 * **MCP サーバーを使う** → [クイックスタート（5分）](getting-started/quickstart.md) から読み進めてください。Claude Desktop で bitbank のデータをAIに分析させるところまで5分程度で到達できます。各クライアント別の詳しい設定は [セットアップ詳細](getting-started/setup.md) にまとめています。
-* **CLI を使う** → CLI セクションは現在準備中です（[CLI（準備中）](cli/README.md)）。
+* **CLI を使う** → [CLI のはじめに](cli/README.md) から読み進めてください。コマンドラインから bitbank API を高速に扱い、計算は LLM 自身に任せたい方向けです。
 
 ## 注意事項
 

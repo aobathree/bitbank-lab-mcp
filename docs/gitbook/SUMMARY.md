@@ -21,7 +21,19 @@
 
 ## CLI
 
-* [CLI（準備中）](cli/README.md)
+* [はじめに](cli/README.md)
+* [インストール](cli/getting-started/install.md)
+* [クイックスタート](cli/getting-started/quickstart.md)
+* [API キーの設定](cli/getting-started/api-keys.md)
+* [基本的な使い方](cli/guides/usage.md)
+* [コマンド一覧](cli/guides/commands.md)
+* [Agent Skills](cli/guides/skills.md)
+* [レシピ集](cli/guides/recipes.md)
+* [取引と安全ガード](cli/guides/trading.md)
+* [設定・環境変数](cli/reference/configuration.md)
+* [トラブルシューティング](cli/reference/troubleshooting.md)
+* [FAQ](cli/reference/faq.md)
+* [免責事項](cli/reference/disclaimer.md)
 
 ## Reference
 
