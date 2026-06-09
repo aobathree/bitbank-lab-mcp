@@ -1,0 +1,21 @@
+# gitleaks の誤検知を fingerprint 単位で除外する。
+# 形式: <commit>:<file>:<rule>:<line>
+# 追加する際は「実鍵でないこと」を必ず確認し、理由をコメントで残すこと。
+
+# tests/private/auth.test.ts の TEST_SECRET は HMAC 署名の公開テストベクタ（実鍵ではない）。
+# 現行コードは inline `gitleaks:allow` で除外済み。以下は過去コミット分。
+9153f2bf4942135f1a9fbd7ab881cbd39e3b125c:tests/private/auth.test.ts:generic-api-key:24
+9be2117068f673c15f479f3d06ef81eaca44621a:tests/private/auth.test.ts:generic-api-key:24
+ca5cb4ac890df2a28307c59bdabccfda5b12ef1d:tests/private/auth.test.ts:generic-api-key:24
+fbe9f1f0efa9261cda6066b2646f0f5dbb5cc936:tests/private/auth.test.ts:generic-api-key:24
+33962ffa2730ca32ea32bae1e57e96c7db4747d0:tests/private/auth.test.ts:generic-api-key:13
+
+# 削除済み local-only テスト（tests/chaos/ / tests/private/security.test.ts は現在 .gitignore 対象）の
+# 過去コミットに残るダミー値。git show で値を確認済み:
+#   valid_api_key_123 / valid_api_secret_456 / a1b2c3d4e5f6…（繰り返し）/
+#   my_secret_api_key_abc123 / my_secret_api_secret_xyz789 — いずれも実鍵ではない。
+e7efe18092472cafe24854d1e86cafe8344890e4:tests/chaos/auth/P-01.test.ts:generic-api-key:14
+e7efe18092472cafe24854d1e86cafe8344890e4:tests/chaos/auth/P-01.test.ts:generic-api-key:41
+6180766aaabaf9c6e8b47bc30fb590e10415516a:tests/chaos/log/L-03.test.ts:generic-api-key:27
+448381a38d53e3db6ec630862834732dd0ee1aa0:tests/private/security.test.ts:generic-api-key:15
+448381a38d53e3db6ec630862834732dd0ee1aa0:tests/private/security.test.ts:generic-api-key:16
