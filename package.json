@@ -11,6 +11,10 @@
     "type": "git",
     "url": "https://github.com/tjackiet/bitbank-lab-mcp.git"
   },
+  "homepage": "https://github.com/tjackiet/bitbank-lab-mcp",
+  "bugs": {
+    "url": "https://github.com/tjackiet/bitbank-lab-mcp/issues"
+  },
   "files": [
     "bin/",
     "src/",
@@ -41,13 +45,23 @@
     "lint:fix": "oxlint --fix src/ tools/ lib/",
     "format": "biome format --write src/ tools/ lib/",
     "postinstall": "mkdir -p assets && cp node_modules/lightweight-charts/dist/lightweight-charts.standalone.production.js assets/lightweight-charts.standalone.js || true",
+    "prepack": "npm run gen:types && npm run postinstall",
     "build:ui:cancel": "vite build --config ui/cancel-confirm/vite.config.ts"
   },
   "engines": {
     "node": ">=22"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "bitbank",
+    "cryptocurrency",
+    "trading",
+    "market-data",
+    "technical-analysis",
+    "mcp",
+    "model-context-protocol",
+    "botters-lab"
+  ],
+  "author": "Bitbank, Inc.",
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^1.7.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
