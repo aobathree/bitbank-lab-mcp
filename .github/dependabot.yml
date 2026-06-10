@@ -1,0 +1,33 @@
+version: 2
+
+# 依存更新（version update）にクールダウンを適用し、公開直後のバージョンを自動取り込みしない。
+# - cooldown は version update のみ対象。security update（CVE 対応）は対象外で即時 PR が出る（設計どおり）。
+# - ローカル / CI の `npm install` 側の防御は `.npmrc` の min-release-age=7（CONTRIBUTING.md 参照）。
+updates:
+  # ── npm 依存 ──
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      npm-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+    cooldown:
+      default-days: 7 # .npmrc の min-release-age=7 に合わせる
+      semver-major-days: 14 # major はより慎重に
+
+  # ── GitHub Actions（SHA ピン）──
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    # NOTE: Dependabot の cooldown は github-actions エコシステムでは未サポートのため付けない
+    # （付けると設定が拒否/無視される）。アクション更新は週次 PR を人手レビューで取り込む。
+    groups:
+      github-actions:
+        patterns:
+          - "*"
