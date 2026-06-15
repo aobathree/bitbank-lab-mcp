@@ -915,22 +915,23 @@ describe('toolDef.handler', () => {
 	});
 
 	it('bwTrend 収縮中の検出', async () => {
+		// calcBandWidthTrend は at(-1) と at(-6) を比較する。
+		// 幅を i に対して単調減少させ、計測点（index 14 → 19）で確実に縮むようにする
+		// （以前のしきい値方式だと両計測点が同幅で「不変」になりうる）。
 		const m = mockResult({
-			// BB が収縮: 以前は幅広、今は幅狭
 			bb2_series: {
-				upper: Array.from({ length: 20 }, (_, i) => (i < 10 ? 10500000 : 10100000)),
-				lower: Array.from({ length: 20 }, (_, i) => (i < 10 ? 9500000 : 9900000)),
-				middle: Array.from({ length: 20 }, () => 10000000),
+				upper: Array.from({ length: 20 }, (_, i) => 10_000_000 + (20 - i) * 50_000),
+				lower: Array.from({ length: 20 }, (_, i) => 10_000_000 - (20 - i) * 50_000),
+				middle: Array.from({ length: 20 }, () => 10_000_000),
 			},
 		});
 		mockedAnalyze.mockResolvedValueOnce(m as never);
 		const res = (await toolDef.handler({ pair: 'btc_jpy', type: '1day', limit: 200 })) as {
 			content: Array<{ text: string }>;
 		};
-		// bwTrend を確認（収縮中 or 拡大中 or 不変 のいずれか）
 		const text = res.content[0].text;
-		// BB series の幅が減少しているので収縮中が期待される
-		expect(text).toMatch(/収縮中|拡大中|不変/);
+		// 幅が単調に縮小しているので「収縮中」を決め打ちで検証する
+		expect(text).toContain('収縮中');
 	});
 
 	it('MACD divergence 検出（ベアリッシュ）', async () => {
