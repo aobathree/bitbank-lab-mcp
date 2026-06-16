@@ -14,7 +14,7 @@ ${VISUALIZER_OUTPUT_BLOCK}
 【ツール（この7つのみ。追加呼び出し禁止）】
 1. get_ticker(pair="btc_jpy")
 2. get_candles(pair="btc_jpy", type="1hour", limit=24) — 進行中足は isoTimeLocal+足種で判断。volume だけでは判定しない
-3. get_flow_metrics(pair="btc_jpy", hours=8, bucketMs=60000, view="summary") — 警告・カバー率をそのまま表示
+3. get_flow_metrics(pair="btc_jpy", hours=8, bucketMs=60000, view="summary") — 警告・注記・取得レンジをそのまま表示（直近フローとして扱う）
 4. analyze_support_resistance(pair="btc_jpy", lookbackDays=90, topN=3)
 5. get_orderbook(pair="btc_jpy", mode=pressure, bandsPct=[0.005, 0.01, 0.02])
 6. analyze_mtf_sma(pair="btc_jpy") — analyze_sma_snapshot の個別呼び出し不要
@@ -26,7 +26,7 @@ ${VISUALIZER_OUTPUT_BLOCK}
 1. ヘッダー（タイトル・get_ticker の取得時刻）
 2. 価格サマリー（レンジ・変動率・高安・スパークライン）
 3. イベントタイムライン（急変動 or なし）
-4. 出来高 + 売買比率（縦積みカード。flow の警告・実レンジ・カバー率を表示）
+4. 出来高 + 売買比率（縦積みカード。flow の警告・注記・実レンジを表示。直近フローとして提示し、カバー率や「8時間」等の固定窓は出さない）
 5. 重要ライン（縦型: レジ→現在→サポ）
 6. 板状況（スナップショット時刻・±1%圧力）
 7. MTFトレンド（1h/4h/日足 + 日足一目、confluence 表示）

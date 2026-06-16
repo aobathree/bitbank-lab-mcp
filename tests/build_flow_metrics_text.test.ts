@@ -81,10 +81,11 @@ describe('buildFlowMetricsText', () => {
 	it('dataWarning がある場合はテキストに含まれる', () => {
 		const text = buildFlowMetricsText(
 			makeInput({
-				dataWarning: '⚠️ 2時間分をリクエストしましたが、取得できたデータは約30分間です。',
+				dataWarning:
+					'ℹ️ 取得できた約定は直近約30分間分です。固定の時間窓に対する不足ではなく、直近フローとして扱ってください。',
 			}),
 		);
-		expect(text).toContain('⚠️ 2時間分をリクエスト');
+		expect(text).toContain('直近約30分間分');
 	});
 
 	it('dataWarning が undefined の場合は警告行なし', () => {

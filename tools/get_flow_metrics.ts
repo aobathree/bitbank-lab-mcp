@@ -428,15 +428,18 @@ export default async function getFlowMetrics(
 		const actualEndMs = txs[txs.length - 1]?.timestampMs;
 		const actualDurationMin = actualStartMs && actualEndMs ? Math.round((actualEndMs - actualStartMs) / 60_000) : 0;
 
-		// データ不足警告
+		// データ範囲の注記（直近フロー）
 		const warnings: string[] = [];
 		if (fetchWarning) warnings.push(fetchWarning);
+		// hours を指定しても当日分はアーカイブ未公開で直近約定のみになることが多い。
+		// 「N時間リクエストに対しカバー率X%」という固定窓ベースの言い回しは使わず、
+		// 取得できた実レンジを「直近フロー」として提示する（過去日にまたがる分は archive で補完済み）。
 		if (hours != null && hours > 0 && actualDurationMin > 0) {
 			const requestedMin = hours * 60;
 			const coveragePct = Math.round((actualDurationMin / requestedMin) * 100);
 			if (coveragePct < 80) {
 				warnings.push(
-					`⚠️ ${hours}時間分をリクエストしましたが、取得できたデータは約${actualDurationMin}分間（カバー率${coveragePct}%）です。bitbank API の返却上限による制約の可能性があります。`,
+					`ℹ️ 取得できた約定は直近約${actualDurationMin}分間分です。固定の時間窓に対する不足ではなく、直近フローとして扱ってください。`,
 				);
 			}
 		}
@@ -473,9 +476,9 @@ export default async function getFlowMetrics(
 		// 本ツールは OHLC ローソク足ではなく約定（transactions）を時間バケットに集計するため、
 		// 「最新足が未確定（形成中）」という概念が存在しない（lib/provisional-bar.ts の対象外）。
 		// 最新バケットの不完全性は別系統で扱う:
-		//   - hours 指定時のカバレッジ不足 → dataWarning（取得層 meta.warning）
-		//   - 取得失敗 → fetchWarning（取得層 meta.warning）
-		// これらは analyze_indicators 等の provisional 注記（ℹ️）とは別物なので混在させない。
+		//   - hours 指定時の直近レンジ注記（直近フロー） → dataWarning（取得層 meta.warning, ℹ️）
+		//   - 取得失敗 → fetchWarning（取得層 meta.warning, ⚠️）
+		// これらは OHLC ローソク足の provisional 注記（最新足が形成中）とは別物。本ツールに provisional 注記は付けない。
 		// Result の summary は "summary" モード（集計値のみ、バケット行なし）。
 		// 呼び出し側 (handler) が view に応じて content テキストを差し替える。
 		const summary = buildFlowMetricsText({
