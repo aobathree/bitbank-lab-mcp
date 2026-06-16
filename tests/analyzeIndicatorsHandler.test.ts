@@ -530,6 +530,8 @@ describe('toolDef.handler', () => {
 	function mockResult(overrides?: Record<string, unknown>) {
 		// 本番（computeAllIndicators）が返す flat 形状を再現する。
 		// ⚠️ 以前は存在しない `series` キーを注入しており、本番が series を返さないバグを隠蔽していた。
+		// この手組み形状が本番からズレていないかは tests/indicators-contract.test.ts が
+		// computeAllIndicators の出力を IndicatorsInternalSchema に直接通して構造的に担保する。
 		const indicators = {
 			RSI_14: 55,
 			RSI_14_series: Array.from({ length: 10 }, (_, i) => 50 + i),

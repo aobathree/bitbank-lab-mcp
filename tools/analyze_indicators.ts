@@ -308,7 +308,9 @@ function createChartData(
 	};
 }
 
-function computeAllIndicators(normalized: Candle[]): GetIndicatorsData['indicators'] {
+// 本番の指標オブジェクト生成。schema 契約テスト（tests/indicators-contract.test.ts）が
+// この戻り値を IndicatorsInternalSchema に直接通して未知キー混入・キーパス欠落を検出するため export する。
+export function computeAllIndicators(normalized: Candle[]): GetIndicatorsData['indicators'] {
 	const allHighs = normalized.map((c) => c.high);
 	const allLows = normalized.map((c) => c.low);
 	const allCloses = normalized.map((c) => c.close);
