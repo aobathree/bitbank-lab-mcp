@@ -5,33 +5,48 @@ function userMessage(text: string) {
 	return [{ role: 'user' as const, content: [{ type: 'text', text }] }];
 }
 
-const OHAYO_TEXT = `直近の BTC/JPY の動きを視覚化してください。
+/** おはようレポートの前日比用 状態ファイル（作業ディレクトリ基準。cache/ は .gitignore 済み） */
+const OHAYO_STATE_PATH = 'cache/ohayo-state.json';
 
-各セクションにデータの取得時刻・カバー期間を明示（ツールレスポンスの時刻・実レンジをそのまま。推測・「直近8時間」等のハードコード禁止）。
+const OHAYO_TEXT = `今朝の BTC/JPY を「なんとなく把握」する軽量レポートを作成してください。トレード判断用ではありません。5 秒で「今こういう感じか」と分かる密度に絞ります。
+
+【速度（重要）】
+- 必要ツールは最初に 1 回でまとめてロードする（tool_search を何度も呼ばない）。
+- 下記 3 ツールは互いに依存しないので **必ず並列で** 呼ぶ（直列にしない）。
+
+【ツール（この 3 つだけ。追加呼び出し禁止）】
+1. get_ticker(pair="btc_jpy") — 現在値・24h 高安・取得時刻
+2. get_candles(pair="btc_jpy", type="1hour", limit=8, view="items") — スパークライン用に直近 8 本の close だけ使う（view="items" で 8 本すべて取得。default view は 5 本しか返さないため不可）
+3. analyze_market_signal(pair="btc_jpy") — 地合い判定。総合スコア（-100〜+100）と bullish/neutral/bearish を 1 行に要約する用途のみ（数値テーブルは展開しない）
+
+【前日比（状態保存。要 Read/Write ファイルツール）】
+- 冒頭: 作業ディレクトリ直下の ${OHAYO_STATE_PATH} を Read（絶対パスに解決）。
+  スキーマ: {"fetchedAt": ISO8601, "price": number, "signal": "bullish"|"neutral"|"bearish"}
+  ファイルが無い / 読めない / ファイルツール未提供なら **初回扱い**（エラーにしない）。
+- 前日比 = (今回 get_ticker.last − 前回 price) / 前回 price × 100。前回 fetchedAt → 今回取得時刻 の経過時間も添える。
+- 初回など前回値が無い場合は「前日比 N/A（初回）」と明示する。
+- 末尾: ${OHAYO_STATE_PATH} に今回値を Write（cache/ が無ければ作成）。Write 不可の環境なら保存はスキップしてよい。
+  {"fetchedAt": <get_ticker の取得時刻 ISO>, "price": <get_ticker.last>, "signal": <analyze_market_signal の recommendation>}
+
+【データ誠実性】
+- 各数値に取得時刻・カバー期間をツールレスポンスのまま明記（推測・「直近8時間」等のハードコード禁止）。
+- ツールの content / summary に warning・カバー率があれば隠さずそのまま表示する。
 
 ${VISUALIZER_OUTPUT_BLOCK}
 
-【ツール（この7つのみ。追加呼び出し禁止）】
-1. get_ticker(pair="btc_jpy")
-2. get_candles(pair="btc_jpy", type="1hour", limit=24) — 進行中足は isoTimeLocal+足種で判断。volume だけでは判定しない
-3. get_flow_metrics(pair="btc_jpy", hours=8, bucketMs=60000, view="summary") — 警告・注記・取得レンジをそのまま表示（直近フローとして扱う）
-4. analyze_support_resistance(pair="btc_jpy", lookbackDays=90, topN=3)
-5. get_orderbook(pair="btc_jpy", mode=pressure, bandsPct=[0.005, 0.01, 0.02])
-6. analyze_mtf_sma(pair="btc_jpy") — analyze_sma_snapshot の個別呼び出し不要
-7. analyze_ichimoku_snapshot(pair="btc_jpy", type="1day")
+【レイアウト（最小構成）】
+- 上段: 結論（大きめ 1 行＋補足 1 行）
+- 中段: ミニスパークライン（横長・小）
+- 下段: 地合い 1 行＋（任意）主要ライン 2 本を small text
+- mockup モジュール想定。カードを敷き詰めず余白を活かす。「テキスト＋スパークライン 1 個」を超えて盛らない。
 
-価格スパークライン: get_candles 直近8本の close からインライン SVG（render_chart_svg 不要）
+【セクション（この 3 つだけ）】
+1. 結論（最上段・1〜2 行）— 結論先行。例:「今朝 ¥10,600,000、前日比 −0.2%（ほぼ横ばい）。地合いは弱気寄り。」価格の質感を言葉で（じり安 / 横ばい / 急騰 等）。これだけ読めば把握が完了する密度にする。
+2. ミニスパークライン — get_candles 直近 8 本 close からインライン SVG（<svg><polyline>。render_chart_svg は使わない）。始点・終点の close 値だけ添える。装飾は最小。
+3. 地合い 1 行 — analyze_market_signal を「強気 / 弱気 / 方向感なし」＋ごく短い根拠（スコア・信頼度）1 行に要約。数値テーブルは出さない。
+（任意・下段に小さく）主要ライン 2 本 — get_ticker の 24h 高安で代用可。上下各 1 本だけ small text。S/R ツールは追加しない（速度優先）。
 
-【セクション】
-1. ヘッダー（タイトル・get_ticker の取得時刻）
-2. 価格サマリー（レンジ・変動率・高安・スパークライン）
-3. イベントタイムライン（急変動 or なし）
-4. 出来高 + 売買比率（縦積みカード。flow の警告・注記・実レンジを表示。直近フローとして提示し、カバー率や「8時間」等の固定窓は出さない）
-5. 重要ライン（縦型: レジ→現在→サポ）
-6. 板状況（スナップショット時刻・±1%圧力）
-7. MTFトレンド（1h/4h/日足 + 日足一目、confluence 表示）
-8. ポイント（1-2行）
-9. 免責
+【出さないもの】イベントタイムライン / 板圧力 ±0.5・1・2% の 3 段 / MTF 25・75・200 数値テーブル / 一目均衡表の詳細・三役判定 / trigger price・シナリオ分岐。
 
 ${DISCLAIMER_MARKET}`;
 
@@ -72,14 +87,15 @@ ${DISCLAIMER_MARKET}
 export const reportPrompts: PromptDef[] = [
 	{
 		name: '🌅 おはようレポート',
-		description: '直近の BTC/JPY の動きを視覚化。Visualizer（デフォルト）または HTML ファイルで出力。',
+		description:
+			'今朝の BTC/JPY をサッと把握する軽量レポート（価格＋前日比・ミニスパークライン・地合い1行）。前回実行値と比較。Visualizer（デフォルト）または HTML 出力。',
 		arguments: [VISUALIZER_MODE_ARG],
 		messages: userMessage(OHAYO_TEXT),
 		metadata: {
 			level: PromptLevel.INTERMEDIATE,
 			category: PromptCategory.ANALYSIS,
-			estimatedTime: '30秒',
-			tags: ['intermediate', 'btc', 'overnight', 'visual', 'visualizer', 'html'],
+			estimatedTime: '15秒',
+			tags: ['intermediate', 'btc', 'overnight', 'lightweight', 'visual', 'visualizer', 'html'],
 		},
 	},
 	{
