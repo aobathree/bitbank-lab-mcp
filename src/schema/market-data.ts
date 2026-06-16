@@ -158,6 +158,10 @@ export const GetOrderbookDataSchemaOut = z.discriminatedUnion('mode', [
 export const GetOrderbookMetaSchemaOut = BaseMetaSchema.extend({
 	mode: z.enum(['summary', 'pressure', 'statistics', 'raw']),
 	topN: z.number(),
+	/** 非有限な price/size を持つ板レベルを drop した件数。0 件なら省略。 */
+	droppedRows: z.object({ bids: z.number(), asks: z.number() }).optional(),
+	/** drop が発生した場合の警告メッセージ（取得層の不完全性）。 */
+	warning: z.string().optional(),
 });
 export const GetOrderbookOutputSchema = toolResultSchema(GetOrderbookDataSchemaOut, GetOrderbookMetaSchemaOut);
 

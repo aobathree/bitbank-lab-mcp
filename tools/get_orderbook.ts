@@ -46,6 +46,27 @@ export interface GetOrderbookParams {
 type RawLevel = [string, string]; // [price, size] from API
 type NumLevel = [number, number]; // [price, size] parsed
 
+/**
+ * raw な板レベル配列から、price/size が非有限になる行を drop する。
+ *
+ * bitbank /depth は値を string で返すため、上流が壊れた値（"abc" 等）を返すと
+ * Number() が NaN になり、Math.max/min・Zod parse・テキスト表示まで伝播する。
+ * （summary/statistics は Zod 失敗で 'network' 誤分類、raw は "NaN円" として LLM に流出。）
+ * prepare_depth_data の toFiniteTuples と同じ防御を全 mode の入口で行う。
+ */
+function toFiniteRawLevels(raw: RawLevel[]): { rows: RawLevel[]; dropped: number } {
+	let dropped = 0;
+	const rows: RawLevel[] = [];
+	for (const lvl of raw) {
+		if (Number.isFinite(Number(lvl?.[0])) && Number.isFinite(Number(lvl?.[1]))) {
+			rows.push(lvl);
+		} else {
+			dropped++;
+		}
+	}
+	return { rows, dropped };
+}
+
 function toLevelsWithCum(levels: NumLevel[], n: number): OrderbookLevelWithCum[] {
 	const out = levels.slice(0, n).map(([price, size]) => ({ price, size, cumSize: 0 }));
 	let cum = 0;
@@ -115,6 +136,7 @@ function buildSummary(pair: string, bidsNum: NumLevel[], asksNum: NumLevel[], to
 // ─── mode=pressure ───
 
 function buildPressure(pair: string, bidsRaw: RawLevel[], asksRaw: RawLevel[], bandsPct: number[], timestamp: number) {
+	const baseCcy = pair.split('_')[0]?.toUpperCase() ?? '';
 	const bestAsk = Number(asksRaw?.[0]?.[0] ?? NaN);
 	const bestBid = Number(bidsRaw?.[0]?.[0] ?? NaN);
 	const baseMid = Number.isFinite(bestAsk) && Number.isFinite(bestBid) ? (bestAsk + bestBid) / 2 : null;
@@ -194,7 +216,7 @@ function buildPressure(pair: string, bidsRaw: RawLevel[], asksRaw: RawLevel[], b
 		'📊 板圧力分析:',
 		...bands.map(
 			(b) =>
-				`±${(b.widthPct * 100).toFixed(2)}%: 買い ${b.baseBidSize.toFixed(2)} BTC / 売り ${b.baseAskSize.toFixed(2)} BTC (圧力: ${((b.netDeltaPct ?? 0) * 100).toFixed(1)}%)${b.tag ? ` [${b.tag}]` : ''}`,
+				`±${(b.widthPct * 100).toFixed(2)}%: 買い ${b.baseBidSize.toFixed(2)} ${baseCcy} / 売り ${b.baseAskSize.toFixed(2)} ${baseCcy} (圧力: ${((b.netDeltaPct ?? 0) * 100).toFixed(1)}%)${b.tag ? ` [${b.tag}]` : ''}`,
 		),
 		'',
 		`💡 総合評価: ${strongestTag ?? '均衡'}`,
@@ -220,6 +242,7 @@ function buildStatistics(
 	priceZones: number,
 	timestamp: number,
 ) {
+	const baseCcy = pair.split('_')[0]?.toUpperCase() ?? '';
 	const bestBid = bidsNum.length ? Math.max(...bidsNum.map(([p]) => p)) : null;
 	const bestAsk = asksNum.length ? Math.min(...asksNum.map(([p]) => p)) : null;
 	const mid = bestBid != null && bestAsk != null ? (bestBid + bestAsk) / 2 : null;
@@ -357,7 +380,7 @@ function buildStatistics(
 		'📊 板の厚み分析:',
 		...rangesOut.map(
 			(r) =>
-				`±${r.pct}%レンジ: 買い ${r.bidVolume} BTC / 売り ${r.askVolume} BTC (比率 ${r.ratio === null ? '算出不能（売り板=0）' : r.ratio}) → ${r.interpretation}`,
+				`±${r.pct}%レンジ: 買い ${r.bidVolume} ${baseCcy} / 売り ${r.askVolume} ${baseCcy} (比率 ${r.ratio === null ? '算出不能（売り板=0）' : r.ratio}) → ${r.interpretation}`,
 		),
 		'',
 		'📈 価格帯別の流動性分布:',
@@ -368,11 +391,11 @@ function buildStatistics(
 		'🐋 大口注文:',
 		...largeBids.map(
 			(o) =>
-				`買い板: ${o.price.toLocaleString('ja-JP')}円に${o.size} BTC (${o.distance != null ? `${(o.distance >= 0 ? '+' : '') + o.distance}%` : ''})`,
+				`買い板: ${o.price.toLocaleString('ja-JP')}円に${o.size} ${baseCcy} (${o.distance != null ? `${(o.distance >= 0 ? '+' : '') + o.distance}%` : ''})`,
 		),
 		...largeAsks.map(
 			(o) =>
-				`売り板: ${o.price.toLocaleString('ja-JP')}円に${o.size} BTC (${o.distance != null ? `${(o.distance >= 0 ? '+' : '') + o.distance}%` : ''})`,
+				`売り板: ${o.price.toLocaleString('ja-JP')}円に${o.size} ${baseCcy} (${o.distance != null ? `${(o.distance >= 0 ? '+' : '') + o.distance}%` : ''})`,
 		),
 		'',
 		`💡 総合評価: ${overall}（${strength}）`,
@@ -499,8 +522,16 @@ export default async function getOrderbook(params: GetOrderbookParams | string =
 		if (!Array.isArray(d.asks) || !Array.isArray(d.bids)) {
 			return fail('上流レスポンスに bids/asks が含まれていません', 'upstream');
 		}
-		const rawAsks: RawLevel[] = (d.asks as RawLevel[]).slice(0, maxLevels);
-		const rawBids: RawLevel[] = (d.bids as RawLevel[]).slice(0, maxLevels);
+		// 非有限な price/size を持つ板レベルを drop する（prepare_depth_data と同じ防御）。
+		// drop しないと NaN が Math.max/min・Zod parse・テキスト表示へ伝播し、mode により
+		// 'network' 誤分類 / "NaN円" 流出 / pressure の baseMid=null 退行を引き起こす。
+		const { rows: rawAsks, dropped: asksDropped } = toFiniteRawLevels((d.asks as RawLevel[]).slice(0, maxLevels));
+		const { rows: rawBids, dropped: bidsDropped } = toFiniteRawLevels((d.bids as RawLevel[]).slice(0, maxLevels));
+		// 「元々片側が空（一方向の板）」は許容するが、「drop で片側が全滅」は上流データ品質の
+		// 問題として upstream fail に倒す（network 誤分類を避ける）。
+		if ((asksDropped > 0 && rawAsks.length === 0) || (bidsDropped > 0 && rawBids.length === 0)) {
+			return fail('板データの数値変換に失敗しました（有効な bids/asks が存在しません）', 'upstream');
+		}
 		// 上流 timestamp は欠損したら Date.now() で偽装せず upstream fail に倒す。
 		// 板スナップショットの timestamp は「上流が観測した時刻」が意味であり、受信時刻で
 		// 代用すると古いデータをあたかも最新かのように見せてしまう。fetchedAt（受信時刻）は
@@ -510,7 +541,7 @@ export default async function getOrderbook(params: GetOrderbookParams | string =
 			return fail('上流レスポンスに timestamp が含まれていません', 'upstream');
 		}
 
-		// NumLevel 変換（summary / statistics で使用）
+		// NumLevel 変換（rawBids/rawAsks は toFiniteRawLevels 済みで有限値のみ）
 		const bidsNum: NumLevel[] = rawBids.map(([p, s]) => [Number(p), Number(s)]);
 		const asksNum: NumLevel[] = rawAsks.map(([p, s]) => [Number(p), Number(s)]);
 
@@ -537,7 +568,21 @@ export default async function getOrderbook(params: GetOrderbookParams | string =
 			`\n📌 補完ツール: get_flow_metrics（出来高フロー・CVD）, get_transactions（約定履歴）, analyze_indicators（指標）`;
 		result.text += boundary;
 
-		const meta = createMeta(chk.pair, { mode, topN, ...(rateLimit ? { rateLimit } : {}) });
+		// 不正レベルの drop を LLM 可視テキスト先頭 + meta に surface する（prepare_depth_data と対称）。
+		const totalDropped = bidsDropped + asksDropped;
+		const droppedWarning =
+			totalDropped > 0
+				? `⚠️ 上流レスポンスから ${totalDropped}件 の不正な板レベルを除外しました（bids: ${bidsDropped}件 / asks: ${asksDropped}件、price/size が数値変換不能）`
+				: undefined;
+		if (droppedWarning) result.text = `${droppedWarning}\n\n${result.text}`;
+
+		const meta = createMeta(chk.pair, {
+			mode,
+			topN,
+			...(rateLimit ? { rateLimit } : {}),
+			...(totalDropped > 0 ? { droppedRows: { bids: bidsDropped, asks: asksDropped } } : {}),
+			...(droppedWarning ? { warning: droppedWarning } : {}),
+		});
 		return parseAsResult<GetOrderbookData, GetOrderbookMeta>(
 			GetOrderbookOutputSchema,
 			ok(result.text, result.data, meta),

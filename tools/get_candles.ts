@@ -785,9 +785,14 @@ export const toolDef: ToolDefinition = {
 		if (!result.ok) return result;
 		if (view === 'items') {
 			const items = result?.data?.normalized ?? [];
+			const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: JSON.stringify(items, null, 2) }];
+			// 取得層の warning（multi-day/multi-year の部分失敗等）を items view でも保持する。
+			// 落とすと LLM がデータ不完全性に気づけずハルシネーションを起こす（get_transactions と同じ対応）。
+			const warning = (result.meta as { warning?: string } | undefined)?.warning;
+			if (warning) content.push({ type: 'text', text: warning });
 			return {
-				content: [{ type: 'text', text: JSON.stringify(items, null, 2) }],
-				structuredContent: { items } as Record<string, unknown>,
+				content,
+				structuredContent: { items, meta: result.meta } as Record<string, unknown>,
 			};
 		}
 		try {
