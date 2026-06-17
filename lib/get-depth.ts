@@ -1,4 +1,5 @@
 import { GetDepthOutputSchema } from '../src/schemas.js';
+import { toNum } from './conversions.js';
 import { estimateZones } from './depth-analysis.js';
 import { formatSummary, formatTimestampJST } from './formatter.js';
 import { BITBANK_API_BASE, DEFAULT_RETRIES, fetchJsonWithRateLimit } from './http.js';
@@ -83,10 +84,11 @@ export default async function getDepth(pair: string, { timeoutMs = 3000, maxLeve
 			return GetDepthOutputSchema.parse(fail('上流レスポンスに timestamp が含まれていません', 'upstream'));
 		}
 
-		// 簡易サマリ（最良気配と件数）
-		const bestAsk = asks[0]?.[0] ?? null;
-		const bestBid = bids[0]?.[0] ?? null;
-		const mid = bestBid && bestAsk ? roundPrice((Number(bestBid) + Number(bestAsk)) / 2, isJpyPair(chk.pair)) : null;
+		// 簡易サマリ（最良気配と件数）。best 気配は finite な数値のみ採用する
+		// （非数値の truthy 文字列が混じっても mid を NaN 化させず null に倒す）。
+		const bestAsk = toNum(asks[0]?.[0]);
+		const bestBid = toNum(bids[0]?.[0]);
+		const mid = bestBid != null && bestAsk != null ? roundPrice((bestBid + bestAsk) / 2, isJpyPair(chk.pair)) : null;
 		const summary = formatSummary({
 			pair: chk.pair,
 			latest: mid ?? undefined,

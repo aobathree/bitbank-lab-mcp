@@ -144,4 +144,27 @@ describe('mid 丸め規約 — ツール間整合（同一板 → 同一 mid）'
 		expect(new Set(mids).size).toBe(1);
 		expect(mids[0]).toBe(5_000_051);
 	});
+
+	it('API 異常系（upstream success:0）: get_orderbook / prepare_depth_data / get-depth は fail を返す', async () => {
+		// 同一の異常レスポンスを共有経路に流し、全経路が ok:false（upstream 分類）で揃うことを固定する。
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+			asMockResult<Response>({
+				ok: true,
+				status: 200,
+				statusText: 'OK',
+				headers: new Headers(),
+				json: async () => ({ success: 0, data: { code: 20001 } }),
+			}),
+		);
+
+		const ob = await getOrderbook({ pair: 'btc_jpy', mode: 'summary' });
+		expect(ob.ok).toBe(false);
+		expect((ob.meta as { errorType?: string }).errorType).toBe('upstream');
+
+		const pdd = await prepareDepthData({ pair: 'btc_jpy' });
+		expect(pdd.ok).toBe(false);
+
+		const depth = await getDepth('btc_jpy');
+		expect(depth.ok).toBe(false);
+	});
 });
