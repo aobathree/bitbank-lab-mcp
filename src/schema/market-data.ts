@@ -213,6 +213,8 @@ export const GetCandlesMetaSchemaOut = BaseMetaSchema.extend({
 	count: z.number(),
 	/** 取得層の不完全性を示す警告（multi-year/multi-day 部分失敗時など）。指標不足の warnings[] とは別系統。 */
 	warning: z.string().optional(),
+	/** 最新足が形成中（未確定）か。realtime 取得（date 未指定）でのみ立つ情報フラグ。warning とは別系統。 */
+	provisional: z.boolean().optional(),
 });
 export const GetCandlesOutputSchema = toolResultSchema(GetCandlesDataSchemaOut, GetCandlesMetaSchemaOut);
 
