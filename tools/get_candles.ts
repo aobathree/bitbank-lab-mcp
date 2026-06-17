@@ -10,6 +10,7 @@ import { dayjs, formatDateInTz, today, toIsoTime, toIsoWithTz } from '../lib/dat
 import { getErrorMessage } from '../lib/error.js';
 import { formatSummary } from '../lib/formatter.js';
 import { BITBANK_API_BASE, DEFAULT_RETRIES, fetchJsonWithRateLimit, type RateLimitInfo } from '../lib/http.js';
+import { isLatestBarProvisional, PROVISIONAL_BAR_NOTE, prependProvisionalNote } from '../lib/provisional-bar.js';
 import { fail, failFromError, failFromValidation, ok, parseAsResult, toStructured } from '../lib/result.js';
 import { createMeta, ensurePair, validateDate, validateLimit } from '../lib/validate.js';
 import type { CandleType, FailResult, GetCandlesData, GetCandlesMeta, OkResult } from '../src/schemas.js';
@@ -696,6 +697,11 @@ export default async function getCandles(
 			priceRange,
 		});
 
+		// 最新足が形成中（未確定）か。realtime 取得（date 未指定）でのみ判定する。
+		// 過去日 anchor は確定足なので注記を付けない（false）。1month の暦依存も含め、
+		// 厳密判定は lib の isLatestBarProvisional に委ねる（自前実装しない）。
+		const provisional = !dateProvided && isLatestBarProvisional(normalized.at(-1)?.timestamp, String(type));
+
 		// テキスト summary に全ローソク足データを含める
 		// （MCP クライアントが structuredContent.data を読めない場合に対応）
 		const baseCurrency = chk.pair.split('_')[0]?.toUpperCase() ?? '';
@@ -705,18 +711,23 @@ export default async function getCandles(
 				(c.isoTime ? c.isoTime.replace(/\.000Z$/, 'Z') : '?');
 			return `[${i}] ${t} O:${c.open} H:${c.high} L:${c.low} C:${c.close} V:${c.volume}`;
 		});
-		const summary =
-			(fetchWarning ? `${fetchWarning}\n` : '') +
+		const body =
 			baseSummary +
 			`\n\n📋 全${normalized.length}件のOHLCV (volume=${baseCurrency}建て合算値):\n` +
 			candleLines.join('\n') +
 			`\n\n---\n📌 含まれるもの: OHLCV（volume=${baseCurrency}建て合算値）、価格レンジ、期間別変動率` +
 			`\n📌 含まれないもの: 出来高の売買内訳、板情報、ファンディングレート、個別約定` +
 			`\n📌 補完ツール: get_flow_metrics（売買内訳・CVD）, get_transactions（個別約定）, get_orderbook（板情報）`;
+		// 形成中足の注記（warning 2 系統とは別系統の情報注記）→ 上流 fetchWarning の順で summary 先頭に連結する。
+		// 順序は ⚠️ fetchWarning → ℹ️ 形成中注記 → 本文（warning を最優先で見せる）。
+		const bodyWithNote = prependProvisionalNote(body, provisional, { separator: '\n' });
+		const summary = fetchWarning ? `${fetchWarning}\n${bodyWithNote}` : bodyWithNote;
 
 		const metaExtra: Record<string, unknown> = { type, count: normalized.length };
 		if (lastRateLimit) metaExtra.rateLimit = lastRateLimit;
 		if (fetchWarning) metaExtra.warning = fetchWarning;
+		// 形成中足フラグ（warning / warnings とは別系統）。handler が代替ビューでも注記を出すために参照する。
+		if (provisional) metaExtra.provisional = true;
 		if (needsMultiYear) {
 			metaExtra.multiYear = {
 				yearsRequested: yearsNeeded,
@@ -786,10 +797,13 @@ export const toolDef: ToolDefinition = {
 		if (view === 'items') {
 			const items = result?.data?.normalized ?? [];
 			const content: Array<{ type: 'text'; text: string }> = [{ type: 'text', text: JSON.stringify(items, null, 2) }];
-			// 取得層の warning（multi-day/multi-year の部分失敗等）を items view でも保持する。
-			// 落とすと LLM がデータ不完全性に気づけずハルシネーションを起こす（get_transactions と同じ対応）。
-			const warning = (result.meta as { warning?: string } | undefined)?.warning;
-			if (warning) content.push({ type: 'text', text: warning });
+			// 取得層の warning（multi-day/multi-year の部分失敗等）と形成中足の注記（meta.provisional）を
+			// items view でも保持する。落とすと LLM がデータ不完全性・最新足の未確定性に気づけず
+			// ハルシネーションを起こす（.claude/rules/tools.md「代替ビューで warning 行を落とさない」）。
+			// 順序は ⚠️ warning → ℹ️ 形成中注記（summary と同じ優先度）。content[0] は JSON のまま保つ。
+			const meta = result.meta as { warning?: string; provisional?: boolean } | undefined;
+			if (meta?.warning) content.push({ type: 'text', text: meta.warning });
+			if (meta?.provisional) content.push({ type: 'text', text: PROVISIONAL_BAR_NOTE });
 			return {
 				content,
 				structuredContent: { items, meta: result.meta } as Record<string, unknown>,

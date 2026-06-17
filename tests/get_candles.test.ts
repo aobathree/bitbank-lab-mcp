@@ -1825,4 +1825,127 @@ describe('getCandles', () => {
 			expect(res.summary).toContain('check pair/type/date validity');
 		});
 	});
+
+	// ── 形成中足（provisional）注記: realtime のみ ℹ️ 注記 + meta.provisional を立てる ──
+	// analyze_indicators / get_volatility_metrics と同じ横展開。生データツール側の漏れを塞ぐ。
+
+	describe('形成中足（provisional）注記', () => {
+		/** 末尾の足が「現在形成中」になるよう ts を当日 UTC 0 時に揃えた日足を作る。 */
+		const makeRowsEndingToday = (count: number): string[][] => {
+			const todayStart = dayjs().utc().startOf('day').valueOf();
+			return Array.from({ length: count }, (_, i) => {
+				const idxFromEnd = count - 1 - i;
+				const base = 100 + i;
+				return [
+					String(base),
+					String(base + 10),
+					String(base - 10),
+					String(base + 5),
+					'1.0',
+					String(todayStart - idxFromEnd * 86_400_000),
+				];
+			});
+		};
+
+		/** 過去（2024 年起点）の確定足を作る。 */
+		const makePastRows = (count: number): string[][] => {
+			const baseTs = 1704067200000; // 2024-01-01 UTC
+			return Array.from({ length: count }, (_, i) => [
+				String(100 + i),
+				String(110 + i),
+				String(90 + i),
+				String(105 + i),
+				'1.0',
+				String(baseTs + i * 86_400_000),
+			]);
+		};
+
+		const mockOhlcv = (rows: string[][]) => {
+			vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+				ok: true,
+				status: 200,
+				statusText: 'OK',
+				json: async () => ({ success: 1, data: { candlestick: [{ ohlcv: rows }] } }),
+			} as unknown as Response);
+		};
+
+		it('realtime（date 未指定）で最新足が形成中のとき meta.provisional=true かつ summary 先頭に ℹ️ 注記が出る', async () => {
+			mockOhlcv(makeRowsEndingToday(30));
+			const res = await getCandles('btc_jpy', '1day', undefined, 14);
+			assertOk(res);
+			expect((res.meta as { provisional?: boolean }).provisional).toBe(true);
+			expect(res.summary).toContain('未確定（形成中）');
+			// fetchWarning が無いので注記は summary 先頭（⚠️ ではなく ℹ️）。
+			expect(res.summary.startsWith('ℹ️')).toBe(true);
+		});
+
+		it('過去日 anchor（date 指定）では確定足なので meta.provisional は付かず注記も出ない', async () => {
+			mockOhlcv(makePastRows(30));
+			const res = await getCandles('btc_jpy', '1day', '2024', 14);
+			assertOk(res);
+			expect((res.meta as { provisional?: boolean }).provisional).toBeUndefined();
+			expect(res.summary).not.toContain('未確定（形成中）');
+		});
+
+		it('date 指定時は最新足の期間が未終了でも注記を付けない（!dateProvided ゲート）', async () => {
+			// 当月の月足は ts 上 isLatestBarProvisional=true だが、date 指定なので注記を出さない。
+			// !dateProvided ゲートが外れると provisional=true に化けるため、それを回帰で防ぐ。
+			// now を月の途中に固定する（実時刻に依存すると月境界で ts 判定がブレるため）。
+			vi.useFakeTimers();
+			try {
+				vi.setSystemTime(dayjs.utc('2026-06-17T06:00:00Z').valueOf());
+				// 2026-01〜2026-06 の月足。末尾 = 2026-06-01（当月、期間未終了）。
+				// anchor=20260610（過去・当月内）で当月足は filter を通過する。
+				const rows = Array.from({ length: 6 }, (_, i) => {
+					const ts = Date.UTC(2026, i, 1);
+					const base = 1000 + i;
+					return [String(base), String(base + 10), String(base - 10), String(base + 5), '1.0', String(ts)];
+				});
+				mockOhlcv(rows);
+				const res = await getCandles('btc_jpy', '1month', '20260610', 6);
+				assertOk(res);
+				// 末尾足は当月（期間未終了）であることを明示。
+				expect(res.data.normalized.at(-1)?.timestamp).toBe(Date.UTC(2026, 5, 1));
+				// それでも date 指定なので注記・フラグは付かない。
+				expect((res.meta as { provisional?: boolean }).provisional).toBeUndefined();
+				expect(res.summary).not.toContain('未確定（形成中）');
+			} finally {
+				vi.useRealTimers();
+			}
+		});
+
+		it('handler default view: realtime の content header に ℹ️ 注記が含まれる', async () => {
+			mockOhlcv(makeRowsEndingToday(30));
+			const res = (await toolDef.handler({ pair: 'btc_jpy', type: '1day', limit: 14 })) as {
+				content: Array<{ type: string; text: string }>;
+			};
+			expect(res.content[0].text).toContain('未確定（形成中）');
+		});
+
+		it('handler items view: realtime では JSON を content[0] に保ちつつ注記ブロックが残る', async () => {
+			mockOhlcv(makeRowsEndingToday(30));
+			const res = (await toolDef.handler({ pair: 'btc_jpy', type: '1day', limit: 14, view: 'items' })) as {
+				content: Array<{ type: string; text: string }>;
+			};
+			// content[0] は JSON 配列のまま（既存契約を維持）。
+			const parsed = JSON.parse(res.content[0].text);
+			expect(Array.isArray(parsed)).toBe(true);
+			// 注記は別ブロックとして保持される。
+			expect(res.content.some((c) => c.text.includes('未確定（形成中）'))).toBe(true);
+		});
+
+		it('handler items view: 過去日 anchor では注記ブロックを付けない', async () => {
+			mockOhlcv(makePastRows(30));
+			const res = (await toolDef.handler({
+				pair: 'btc_jpy',
+				type: '1day',
+				date: '2024',
+				limit: 14,
+				view: 'items',
+			})) as {
+				content: Array<{ type: string; text: string }>;
+			};
+			expect(res.content.some((c) => c.text.includes('未確定（形成中）'))).toBe(false);
+		});
+	});
 });
