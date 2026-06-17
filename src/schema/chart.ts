@@ -190,13 +190,16 @@ export const PrepareChartDataOutputSchema = z.object({
 			})
 			.optional(),
 	}),
-	meta: z.object({
-		pair: z.string(),
+	meta: BaseMetaSchema.extend({
 		type: CandleTypeEnum,
 		count: z.number(),
 		indicators: z.array(z.string()),
 		/** 出来高の単位（ペアのベース通貨。例: btc_jpy → "BTC"） */
 		volumeUnit: z.string(),
+		/** 上流 get_candles → analyze_indicators から伝播する取得層 warning（partial fetch 等）。 */
+		warning: z.string().optional(),
+		/** 上流 analyze_indicators の指標不足 warnings（"SMA_200: データ不足" 等）。warning とは別系統。 */
+		warnings: z.array(z.string()).optional(),
 	}),
 });
 

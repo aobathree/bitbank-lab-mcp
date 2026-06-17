@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dayjs } from '../lib/datetime.js';
+import { PrepareChartDataOutputSchema } from '../src/schemas.js';
 import { clearIndicatorCache } from '../tools/analyze_indicators.js';
 import prepareChartData, { toolDef } from '../tools/prepare_chart_data.js';
 import { assertFail, assertOk } from './_assertResult.js';
@@ -517,6 +518,66 @@ describe('prepare_chart_data', () => {
 			expect(l).toBe(expectedL);
 			expect(c).toBe(expectedC);
 			expect(v).toBe(expectedV);
+		});
+	});
+
+	// ─── wire 出力の schema 検証（PrepareChartDataOutputSchema）─────────────
+	//
+	// prepare_chart_data は最終 ok() を parseAsResult で schema 検証して返す
+	// （prepare_depth_data:206 / get_candles と同じ経路。以前は ok() 素返しで未検証だった）。
+	// ここでは market_data_audit.test.ts §3 の assertRoundTrip パターンで、
+	// JSON.stringify→parse 後の wire 形式でも schema を通過し意味が壊れないことを固定する。
+	describe('wire 出力 schema 検証 (JSON round-trip)', () => {
+		type ParsedPrepareChartData = ReturnType<typeof PrepareChartDataOutputSchema.parse>;
+
+		// wire（JSON 往復後）を schema に通し、parse 結果（strip/transform 適用後）で意味不変を検証する。
+		// 生の wire ではなく parsed に対して invariants を評価することで、parse 時の strip も検出できる。
+		function assertRoundTrip(res: unknown, invariants: (parsed: ParsedPrepareChartData) => void) {
+			const wire = JSON.parse(JSON.stringify(res));
+			const parsed = PrepareChartDataOutputSchema.parse(wire); // schema 違反なら throw → テスト失敗
+			invariants(parsed);
+		}
+
+		it('candles のみ: roundtrip 後も schema parse 成功 + summary/candles/times/meta 不変', async () => {
+			mockFetch(makeOhlcvRows(600));
+			const res = await prepareChartData('btc_jpy', '1day', 30);
+			assertOk(res);
+			assertRoundTrip(res, (v) => {
+				expect(v.ok).toBe(true);
+				expect(v.summary).toBe(res.summary);
+				expect(v.data.candles).toHaveLength(res.data.candles.length);
+				expect(v.data.times).toHaveLength(res.data.times.length);
+				expect(v.data.candleFormat).toEqual(['open', 'high', 'low', 'close', 'volume']);
+				expect(v.meta.pair).toBe('btc_jpy');
+				expect(v.meta.count).toBe(res.data.candles.length);
+				expect(v.meta.volumeUnit).toBe('BTC');
+			});
+		});
+
+		it('series + subPanels: roundtrip 後も schema parse 成功 + 指標系列長が保持される', async () => {
+			mockFetch(makeOhlcvRows(600));
+			const res = await prepareChartData('btc_jpy', '1day', 50, ['SMA_20', 'BB', 'RSI', 'MACD']);
+			assertOk(res);
+			assertRoundTrip(res, (v) => {
+				expect(Object.keys(v.data.series ?? {}).length).toBeGreaterThan(0);
+				expect(v.data.series?.SMA_20).toHaveLength(v.data.candles.length);
+				expect(v.data.subPanels?.RSI_14).toHaveLength(v.data.candles.length);
+				expect(v.data.subPanels?.MACD?.line).toHaveLength(v.data.candles.length);
+			});
+		});
+
+		it('指標不足 warnings が wire（meta.warnings）でも保持される（schema strip されない）', async () => {
+			// 少データで SMA_200 等の指標不足警告を発生させ、schema 検証後も meta.warnings が
+			// 残ることを固定する（schema meta に warnings を含めた回帰防止）。
+			mockFetch(makeOhlcvRows(40));
+			const res = await prepareChartData('mona_jpy', '1day', 30);
+			assertOk(res);
+			expect((res.meta.warnings ?? []).length).toBeGreaterThan(0);
+			assertRoundTrip(res, (v) => {
+				expect(Array.isArray(v.meta.warnings)).toBe(true);
+				expect((v.meta.warnings ?? []).length).toBeGreaterThan(0);
+				expect(v.meta.warnings).toEqual(res.meta.warnings);
+			});
 		});
 	});
 });

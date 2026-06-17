@@ -11,11 +11,11 @@
 
 import { dayjs, toIsoWithTz } from '../lib/datetime.js';
 import { isJpyPair, roundPrice } from '../lib/price.js';
-import { fail, failFromError, ok, toStructured } from '../lib/result.js';
+import { fail, failFromError, ok, parseAsResult, toStructured } from '../lib/result.js';
 import { createMeta, ensurePair } from '../lib/validate.js';
 import { extractUpstreamWarning, prependWarnings } from '../lib/warning-propagation.js';
 import type { Candle, FailResult, NumericSeries, OkResult } from '../src/schemas.js';
-import { PrepareChartDataInputSchema } from '../src/schemas.js';
+import { PrepareChartDataInputSchema, PrepareChartDataOutputSchema } from '../src/schemas.js';
 import type { ToolDefinition } from '../src/tool-definition.js';
 import analyzeIndicators from './analyze_indicators.js';
 
@@ -268,7 +268,12 @@ export default async function prepareChartData(
 		// summary 先頭に warning / warnings を別行で連結する（取得層 / 計算層を別系統で出す）。
 		// LLM が summary だけ見ても不完全性に気づけるようにするため。
 		const summary = prependWarnings(baseSummary, mergedUpstream, { separator: '\n' });
-		return ok(summary, data, meta);
+		// wire 出力を schema 検証する（prepare_depth_data / get_candles と同じ parseAsResult 経路）。
+		// meta.warning / warnings は schema に含めているため strip されない（warning 伝播契約を維持）。
+		return parseAsResult<PrepareChartDataResult, PrepareChartDataMeta>(
+			PrepareChartDataOutputSchema,
+			ok(summary, data, meta),
+		);
 	} catch (err: unknown) {
 		return failFromError(err);
 	}
