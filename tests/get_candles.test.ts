@@ -144,6 +144,34 @@ describe('getCandles', () => {
 		expect(res.data.volumeStats?.judgment).toBeDefined();
 	});
 
+	it('出来高推移ラベルは pair の base 通貨を使う（eth_jpy → ETH/日、BTC/日 を含まない）', async () => {
+		const baseTs = 1704067200000; // 2024-01-01T00:00:00Z
+		// volumeStats は totalItems >= 14 で算出される。ちょうど 14 本生成する。
+		const ohlcv = Array.from({ length: 14 }, (_, i) => [
+			'100',
+			'110',
+			'90',
+			'105',
+			String(1 + i * 0.1),
+			String(baseTs + i * 86400000),
+		]);
+		vi.spyOn(globalThis, 'fetch').mockResolvedValue({
+			ok: true,
+			status: 200,
+			statusText: 'OK',
+			json: async () => ({
+				success: 1,
+				data: { candlestick: [{ ohlcv }] },
+			}),
+		} as unknown as Response);
+
+		const res = await getCandles('eth_jpy', '1day', '2024', 14);
+		assertOk(res);
+		expect(res.summary).toContain('【出来高推移】');
+		expect(res.summary).toContain('ETH/日');
+		expect(res.summary).not.toContain('BTC/日');
+	});
+
 	it('出来高変化率が +20% 以上なら「活発になっています」と判定するべき', async () => {
 		const baseTs = 1704067200000;
 		// recent 7 days high volume, previous 7 days low volume

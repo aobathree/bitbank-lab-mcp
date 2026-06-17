@@ -600,6 +600,31 @@ describe('toolDef.handler', () => {
 		expect(res.content[0].text).toContain('【総合判定】');
 	});
 
+	// OBV 単位は pair の base 通貨から導出する（他ツールと同じ規約）。
+	// build_indicators_handler_text.test.ts は obvUnit を固定入力で渡すため、
+	// handler の導出ロジック自体はここで検証する。
+	it('obvUnit を pair の base 通貨から導出する（eth_jpy → ETH）', async () => {
+		mockedAnalyze.mockResolvedValueOnce(mockResult() as never);
+		const res = (await toolDef.handler({ pair: 'eth_jpy', type: '1day', limit: 200 })) as {
+			content: Array<{ text: string }>;
+		};
+		// OBV セクションの「現在値」行に base 通貨が単位として付く。
+		// 修正前は pair が 'btc' を含まないため空文字になっていた。
+		const obvLine = res.content[0].text.split('\n').find((l) => l.trim().startsWith('現在値:'));
+		expect(obvLine).toBeDefined();
+		expect(obvLine).toContain('ETH');
+	});
+
+	it('obvUnit は btc_jpy では BTC のまま（base 通貨導出の回帰）', async () => {
+		mockedAnalyze.mockResolvedValueOnce(mockResult() as never);
+		const res = (await toolDef.handler({ pair: 'btc_jpy', type: '1day', limit: 200 })) as {
+			content: Array<{ text: string }>;
+		};
+		const obvLine = res.content[0].text.split('\n').find((l) => l.trim().startsWith('現在値:'));
+		expect(obvLine).toBeDefined();
+		expect(obvLine).toContain('BTC');
+	});
+
 	it('analyzeIndicators 失敗時はそのまま返す', async () => {
 		mockedAnalyze.mockResolvedValueOnce({ ok: false, summary: 'error' } as never);
 		const res = (await toolDef.handler({ pair: 'btc_jpy', type: '1day', limit: 200 })) as { ok: boolean };

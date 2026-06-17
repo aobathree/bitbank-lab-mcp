@@ -293,11 +293,14 @@ export function formatSummary(
 
 		// 出来高情報
 		if (volumeStats) {
+			// 出来高の単位は pair の base 通貨から導出する（他ツールと同じ規約）。
+			// pair 未指定時のみ従来どおり BTC にフォールバックする。
+			const baseCcy = (pair ?? '').split('_')[0]?.toUpperCase() || 'BTC';
 			summary += '\n\n【出来高推移】';
-			summary += `\n- 直近7日間の平均: ${volumeStats.recent7DaysAvg.toFixed(0)} BTC/日`;
-			summary += `\n- その前7日間の平均: ${volumeStats.previous7DaysAvg.toFixed(0)} BTC/日`;
+			summary += `\n- 直近7日間の平均: ${volumeStats.recent7DaysAvg.toFixed(0)} ${baseCcy}/日`;
+			summary += `\n- その前7日間の平均: ${volumeStats.previous7DaysAvg.toFixed(0)} ${baseCcy}/日`;
 			if (typeof volumeStats.last30DaysAvg === 'number') {
-				summary += `\n- 過去30日間の平均: ${volumeStats.last30DaysAvg.toFixed(0)} BTC/日`;
+				summary += `\n- 過去30日間の平均: ${volumeStats.last30DaysAvg.toFixed(0)} ${baseCcy}/日`;
 			}
 			if (volumeStats.changePct === null) {
 				summary += '\n- 出来高変化率: N/A（前7日間の出来高ゼロ）';
