@@ -204,6 +204,66 @@ describe('MCP stdio E2E', () => {
 	});
 
 	// ============================================================
+	// mid 丸め規約の経路間整合（同一 /depth → 同一 mid）
+	// ============================================================
+	describe('mid 丸め規約の経路間整合（E2E / 奇数 spread）', () => {
+		let client: Client;
+		// bestAsk=15500001 / bestBid=15490000 → mid_raw=15495000.5。JPY は整数丸めで 15,495,001。
+		// 修正前は summary が小数 15,495,000.5、prepare_depth_data が 15495001 と乖離していた。
+		const oddDepth = {
+			success: 1,
+			data: {
+				asks: [
+					['15500001', '0.1'],
+					['15510000', '0.5'],
+				],
+				bids: [
+					['15490000', '0.2'],
+					['15480000', '0.8'],
+				],
+				timestamp: 1710000000000,
+				sequenceId: '12345',
+			},
+		};
+
+		beforeAll(async () => {
+			client = new Client({ name: 'e2e-test', version: '0.0.1' });
+			await connectWithDiagnostics(client, createTransport({ 'btc_jpy/depth': oddDepth }));
+		}, 30_000);
+		afterAll(async () => {
+			await client.close();
+		});
+
+		it('同一 /depth を実サーバ経由で叩くと全経路の mid が 15,495,001 で一致する', async () => {
+			const summary = extractText(
+				await client.callTool({ name: 'get_orderbook', arguments: { pair: 'btc_jpy', mode: 'summary' } }),
+			);
+			const stats = extractText(
+				await client.callTool({ name: 'get_orderbook', arguments: { pair: 'btc_jpy', mode: 'statistics' } }),
+			);
+			const pressure = extractText(
+				await client.callTool({ name: 'get_orderbook', arguments: { pair: 'btc_jpy', mode: 'pressure' } }),
+			);
+			const pdd = await client.callTool({ name: 'prepare_depth_data', arguments: { pair: 'btc_jpy' } });
+			const pddText = extractText(pdd);
+
+			// 円表記の経路（summary / statistics / pressure）は全て整数 15,495,001 を表示する。
+			expect(summary).toContain('15,495,001');
+			expect(stats).toContain('15,495,001');
+			expect(pressure).toContain('15,495,001');
+			// JSON 経路（prepare_depth_data）は生の整数。
+			expect(pddText).toContain('"mid":15495001');
+			assertOkQuality(pdd);
+
+			// 旧バグの小数 mid（クロスチェック乖離の原因）がどの経路にも出ないこと。
+			for (const t of [summary, stats, pressure, pddText]) {
+				expect(t).not.toContain('15,495,000.5');
+				expect(t).not.toContain('15495000.5');
+			}
+		});
+	});
+
+	// ============================================================
 	// get_candles
 	// ============================================================
 	describe('get_candles', () => {
