@@ -1,3 +1,5 @@
+import { realpathSync } from 'node:fs';
+import { basename, delimiter, dirname, join, resolve, sep } from 'node:path';
 import type { Pair } from '../src/schemas.js';
 import { nowIso } from './datetime.js';
 
@@ -146,6 +148,74 @@ export function validateDate(
 		};
 	}
 	return { ok: true, value: date };
+}
+
+/** チャートファイルの既定出力ディレクトリ（Claude.ai 環境の出力先） */
+export const DEFAULT_CHART_OUTPUT_DIR = '/mnt/user-data/outputs';
+
+/** チャート出力の許可 root を運用側が追加する環境変数（path.delimiter 区切り） */
+export const OUTPUT_DIR_ALLOWLIST_ENV = 'BACKTEST_OUTPUT_DIR_ALLOWLIST';
+
+/**
+ * チャート出力先として許可される root ディレクトリ一覧。
+ * 既定: DEFAULT_CHART_OUTPUT_DIR とサーバー作業ディレクトリ配下
+ * （相対パス指定・Cursor 等でワークスペース直下に書き出すユースケース用）。
+ * それ以外は運用側が環境変数で明示的に許可する（LLM 入力からは追加できない）。
+ */
+export function allowedOutputRoots(): string[] {
+	const extra = (process.env[OUTPUT_DIR_ALLOWLIST_ENV] ?? '')
+		.split(delimiter)
+		.map((p) => p.trim())
+		.filter((p) => p.length > 0)
+		.map((p) => resolve(p));
+	return [resolve(DEFAULT_CHART_OUTPUT_DIR), process.cwd(), ...extra];
+}
+
+/**
+ * パスを実パスに正規化する。実在する最深の祖先を realpathSync で解決し、
+ * 未作成の末尾セグメントは字句のまま結合する（mkdir 前の検証で使うため）。
+ * 許可 root 配下に置かれた symlink を経由した外部への書き込みを防ぐ。
+ */
+function canonicalizePath(p: string): string {
+	let current = resolve(p);
+	const pending: string[] = [];
+	for (;;) {
+		try {
+			return join(realpathSync(current), ...pending);
+		} catch {
+			const parent = dirname(current);
+			if (parent === current) return join(current, ...pending);
+			pending.unshift(basename(current));
+			current = parent;
+		}
+	}
+}
+
+/**
+ * outputDir が許可 root 配下かを検証する。
+ * LLM 入力（プロンプトインジェクション含む）経由でプロセス権限内の任意パスへ
+ * ディレクトリ作成・ファイル書き込みされるのを防ぐ。`..` を含むパスも
+ * symlink も実パスに解決してから判定するため、トラバーサル・symlink では
+ * 迂回できない（検証と書き込みの間に symlink を差し替える TOCTOU は、
+ * それができる時点でローカルアクセスを持つため脅威モデル外）。
+ */
+export function ensureAllowedOutputDir(
+	dir: string,
+): { ok: true; dir: string } | { ok: false; error: { type: 'user' | 'internal'; message: string } } {
+	const canonical = canonicalizePath(dir);
+	const roots = allowedOutputRoots();
+	const canonicalRoots = roots.map(canonicalizePath);
+	const allowed = canonicalRoots.some((root) => canonical === root || canonical.startsWith(root + sep));
+	if (!allowed) {
+		return {
+			ok: false,
+			error: {
+				type: 'user',
+				message: `outputDir '${dir}' は許可されていません。許可 root: ${roots.join(', ')} 配下のみ（追加は環境変数 ${OUTPUT_DIR_ALLOWLIST_ENV} で指定）`,
+			},
+		};
+	}
+	return { ok: true, dir: canonical };
 }
 
 export function createMeta(
